@@ -1,7 +1,7 @@
 // Configuración de ejemplo con la que arranca la app (todo es editable).
 
 import { todayISO, startOfWeek } from './dates'
-import { BUILTIN_RULE_SETS, ESTATUTO_ID, SHIFT_MIX, VACATION_TYPE } from './rules'
+import { BUILTIN_RULE_SETS, ESTATUTO_ID, HOLIDAY_TREATMENT, SHIFT_MIX, VACATION_TYPE } from './rules'
 import { parsePatternText } from './shifts'
 import type { BusinessConfig, RuleSet, Shift, Team } from './types'
 
@@ -28,7 +28,7 @@ export function exampleConvenio(): RuleSet {
     kind: 'convenio',
     description:
       'Ejemplo: 2 días de descanso semanal con 48 h seguidas, 12 h entre jornadas, 30 días naturales de vacaciones, ' +
-      'jornada anual de 221 días y 1.736 h, y cambio de turno en la semana solo tras 2 días libres.',
+      'jornada anual de 221 días y 1.736 h, 14 festivos que se trabajan según el cuadrante, y cambio de turno en la semana solo tras 2 días libres.',
     values: {
       minRestBetweenShiftsHours: 12,
       weeklyRestWindowDays: 7,
@@ -40,6 +40,8 @@ export function exampleConvenio(): RuleSet {
       vacationDayType: VACATION_TYPE.NATURALES,
       maxAnnualWorkDays: 221,
       maxAnnualHours: 1736,
+      annualHolidays: 14,
+      holidayTreatment: HOLIDAY_TREATMENT.SE_TRABAJAN,
     },
   }
 }

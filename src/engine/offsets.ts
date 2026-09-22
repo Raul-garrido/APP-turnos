@@ -4,7 +4,8 @@
 // El día D (contando desde la fecha de inicio), el equipo con desfase `o`
 // está en la posición (D - o) del ciclo.
 //
-// Buscamos los desfases que garantizan la cobertura mínima de cada turno todos los días.
+// Buscamos los desfases que garantizan la cobertura mínima de cada turno todos los días y,
+// como requisito fijo, que se libren los máximos fines de semana completos posibles, repartidos de forma justa.
 // Si hay pocas combinaciones las probamos todas; si hay muchas, usamos una búsqueda
 // por mejora sucesiva (muy rápida y casi siempre encuentra la mejor).
 
@@ -107,8 +108,8 @@ export function computeOffsets(input: OffsetInput): OffsetResult {
 
   const S = active.length
   const counts = new Float64Array(S * periodDays)
-  // Puntuación: primero minimizar huecos; después repartir lo que sobra de forma equilibrada.
-  const score = (offs: number[]): [number, number] => {
+  // Parte de cobertura: huecos (a minimizar) y reparto de lo que sobra (suma de cuadrados, a minimizar).
+  const coverageScore = (offs: number[]): [number, number] => {
     counts.fill(0)
     for (let t = 0; t < N; t++) {
       const row = onShift[offs[t]]
@@ -130,11 +131,42 @@ export function computeOffsets(input: OffsetInput): OffsetResult {
     }
     return [deficit, balance]
   }
-  const better = (a: [number, number], b: [number, number]) => a[0] < b[0] || (a[0] === b[0] && a[1] < b[1] - 1e-9)
 
-  // El primer equipo siempre empieza en 0: desplazar todos a la vez no cambia nada.
+  // Parte de fines de semana: para cada desfase posible, cuántos fines de semana completos
+  // (sábado y domingo seguidos) y cuántos medios libra un equipo. Se precalcula una vez.
+  const wk = weekendTable(pattern, startWeekday)
+  const weekendScore = (offs: number[]): [number, number, number] => {
+    let minFull = Infinity
+    let totalFull = 0
+    let totalPartial = 0
+    for (let t = 0; t < N; t++) {
+      const w = wk[mod(offs[t], L)]
+      minFull = Math.min(minFull, w.full)
+      totalFull += w.full
+      totalPartial += w.partial
+    }
+    return [minFull, totalFull, totalPartial]
+  }
+
+  // Orden de prioridades (requisito fijo):
+  // 1) cobertura mínima, 2) que el equipo con menos fines de semana libres tenga los máximos posibles (reparto justo),
+  // 3) máximo de fines de semana completos en total, 4) máximo de sábados o domingos sueltos, 5) reparto equilibrado.
+  type Score = [number, number, number, number, number]
+  const makeScore = (cov: [number, number], wkS: [number, number, number]): Score => [cov[0], -wkS[0], -wkS[1], -wkS[2], cov[1]]
+  const score = (offs: number[]): Score => makeScore(coverageScore(offs), weekendScore(offs))
+  const better = (a: Score, b: Score) => {
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] < b[i] - 1e-9) return true
+      if (a[i] > b[i] + 1e-9) return false
+    }
+    return false
+  }
+
   const equalWeights = weights.every((w) => w === weights[0])
-  const combos = equalWeights ? binomial(L - 1 + N - 1, N - 1) : Math.pow(L, N - 1)
+  // Si la cobertura exigida es igual todos los días, mover todos los equipos a la vez no cambia la cobertura
+  // (solo cambia en qué días de la semana caen): la calculamos una vez por combinación y probamos los L desplazamientos.
+  const uniformDays = active.every((c) => c.weekdays.length === 7)
+  const combos = (equalWeights ? binomial(L - 1 + N - 1, N - 1) : Math.pow(L, N - 1)) * (uniformDays ? 1 : L)
   const LIMIT = 150_000
 
   let best = teams.map((_, t) => Math.floor((t * L) / N))
@@ -144,15 +176,21 @@ export function computeOffsets(input: OffsetInput): OffsetResult {
   if (combos <= LIMIT) {
     exhaustive = true
     const offs = new Array(N).fill(0)
-    const rec = (t: number, minVal: number) => {
-      if (t === N) {
-        const sc = score(offs)
+    const shifted = new Array(N).fill(0)
+    const tryCombo = () => {
+      const cov = uniformDays ? coverageScore(offs) : null
+      if (cov && cov[0] > bestScore[0]) return
+      for (let g = 0; g < L; g++) {
+        for (let t = 0; t < N; t++) shifted[t] = mod(offs[t] + g, L)
+        const sc = makeScore(cov ?? coverageScore(shifted), weekendScore(shifted))
         if (better(sc, bestScore)) {
           bestScore = sc
-          best = offs.slice()
+          best = shifted.slice()
         }
-        return
       }
+    }
+    const rec = (t: number, minVal: number) => {
+      if (t === N) return tryCombo()
       for (let o = equalWeights ? minVal : 0; o < L; o++) {
         offs[t] = o
         rec(t + 1, o)
@@ -163,14 +201,14 @@ export function computeOffsets(input: OffsetInput): OffsetResult {
     // Búsqueda por mejora: probamos a mover cada equipo a cada desfase y nos quedamos con la mejora.
     const rng = seededRandom(12345)
     const starts = [best.slice()]
-    for (let i = 0; i < 30; i++) starts.push([0, ...Array.from({ length: N - 1 }, () => Math.floor(rng() * L))])
+    for (let i = 0; i < 30; i++) starts.push(Array.from({ length: N }, () => Math.floor(rng() * L)))
     for (const start of starts) {
       const cur = start.slice()
       let curScore = score(cur)
       let improved = true
       while (improved) {
         improved = false
-        for (let t = 1; t < N; t++) {
+        for (let t = 0; t < N && !improved; t++) {
           const original = cur[t]
           for (let o = 0; o < L; o++) {
             if (o === original) continue
@@ -183,7 +221,6 @@ export function computeOffsets(input: OffsetInput): OffsetResult {
             }
           }
           if (!improved) cur[t] = original
-          else break
         }
       }
       if (better(curScore, bestScore)) {
@@ -194,6 +231,46 @@ export function computeOffsets(input: OffsetInput): OffsetResult {
   }
 
   return { offsets: best, deficit: bestScore[0], feasibility, periodDays, exhaustive }
+}
+
+export interface WeekendStats {
+  /** Fines de semana completos libres (sábado y domingo) al año. */
+  fullPerYear: number
+  /** Fines de semana en los que solo se libra el sábado o el domingo, al año. */
+  partialPerYear: number
+}
+
+/**
+ * Para cada desfase posible (0..L-1): fines de semana completos y medios que se libran
+ * en un periodo completo en el que patrón y semana vuelven a coincidir (mcm(L, 7) días).
+ */
+function weekendTable(pattern: PatternItem[], startWeekday: number) {
+  const L = pattern.length
+  const P = (L * 7) / gcd(L, 7)
+  return Array.from({ length: L }, (_, o) => {
+    let full = 0
+    let partial = 0
+    for (let d = 0; d < P; d++) {
+      if (mod(startWeekday + d, 7) !== 5) continue // sábado
+      const sat = pattern[mod(d - o, L)] === OFF
+      const sun = pattern[mod(d + 1 - o, L)] === OFF
+      if (sat && sun) full++
+      else if (sat || sun) partial++
+    }
+    return { full, partial, weekends: P / 7 }
+  })
+}
+
+/** Fines de semana libres al año de cada equipo con unos desfases concretos. */
+export function weekendStats(pattern: PatternItem[], startWeekday: number, offsets: number[]): WeekendStats[] {
+  const L = pattern.length
+  if (!L) return offsets.map(() => ({ fullPerYear: 0, partialPerYear: 0 }))
+  const wk = weekendTable(pattern, startWeekday)
+  return offsets.map((o) => {
+    const w = wk[mod(o, L)]
+    const perYear = 365.25 / 7 / w.weekends
+    return { fullPerYear: Math.round(w.full * perYear), partialPerYear: Math.round(w.partial * perYear) }
+  })
 }
 
 function binomial(n: number, k: number): number {

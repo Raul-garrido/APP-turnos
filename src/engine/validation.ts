@@ -3,12 +3,15 @@
 // El ciclo se trata como circular: el último día enlaza con el primero.
 
 import { addDays, diffDays, formatDate, mod, startOfWeek } from './dates'
-import { RULE_DEFINITIONS, SHIFT_MIX, VACATION_TYPE } from './rules'
+import { HOLIDAY_TREATMENT, RULE_DEFINITIONS, SHIFT_MIX, VACATION_TYPE } from './rules'
 import { findShift, shiftDurationMinutes, parseTime } from './shifts'
 import { OFF, type EffectiveRules, type ISODate, type PatternItem, type RuleKey, type Shift, type Team } from './types'
 
+/** Regla propia de cada turno (máximo de días por semana), que no está en el catálogo general. */
+export const SHIFT_WEEK_RULE = 'shiftMaxDaysPerWeek'
+
 export interface Violation {
-  rule: RuleKey
+  rule: RuleKey | typeof SHIFT_WEEK_RULE
   /** Día del ciclo (1 = primer día) donde se detecta, o null si afecta a todo el ciclo. */
   cycleDay: number | null
   message: string
@@ -25,6 +28,10 @@ export interface PatternStats {
   grossAnnualHours: number
   /** Días de trabajo que se pierden por vacaciones. */
   vacationWorkDays: number
+  /** Festivos que caen en día de trabajo (estimación a partir del número de festivos al año). */
+  holidayWorkDays: number
+  /** Si los festivos se libran (se descuentan) o se trabajan. */
+  holidaysOff: boolean
   /** Días y horas al año descontando vacaciones. */
   netAnnualWorkDays: number
   netAnnualHours: number
@@ -66,7 +73,9 @@ export function patternStats(pattern: PatternItem[], shifts: Shift[], rules?: Ef
   // Naturales: se pierden los días de trabajo que caen dentro de las vacaciones (proporción del ciclo).
   // Hábiles: cada día de vacaciones es un día de trabajo que no se hace.
   const vacationWorkDays = rules?.vacationDayType === VACATION_TYPE.HABILES ? vacation : vacation * workRatio
-  const netAnnualWorkDays = Math.max(grossAnnualWorkDays - vacationWorkDays, 0)
+  const holidayWorkDays = (rules?.annualHolidays ?? 0) * workRatio
+  const holidaysOff = rules?.holidayTreatment === HOLIDAY_TREATMENT.SE_LIBRAN
+  const netAnnualWorkDays = Math.max(grossAnnualWorkDays - vacationWorkDays - (holidaysOff ? holidayWorkDays : 0), 0)
   return {
     cycleLength: L,
     workDays,
@@ -76,6 +85,8 @@ export function patternStats(pattern: PatternItem[], shifts: Shift[], rules?: Ef
     grossAnnualWorkDays: Math.round(grossAnnualWorkDays),
     grossAnnualHours: Math.round(grossAnnualWorkDays * hoursPerWorkDay),
     vacationWorkDays: Math.round(vacationWorkDays),
+    holidayWorkDays: Math.round(holidayWorkDays),
+    holidaysOff,
     netAnnualWorkDays: Math.round(netAnnualWorkDays),
     netAnnualHours: Math.round(netAnnualWorkDays * hoursPerWorkDay),
   }
@@ -108,7 +119,7 @@ export function validatePattern(pattern: PatternItem[], shifts: Shift[], rules: 
     intervals.push({ day: d, shift: s, start, end: start + shiftDurationMinutes(s) })
   }
 
-  const add = (rule: RuleKey, day: number | null, message: string) => violations.push({ rule, cycleDay: day, message })
+  const add = (rule: Violation['rule'], day: number | null, message: string) => violations.push({ rule, cycleDay: day, message })
 
   // 1. Máximo de horas por jornada
   if (rules.maxShiftHours != null) {
@@ -225,6 +236,22 @@ export function validatePattern(pattern: PatternItem[], shifts: Shift[], rules: 
     }
   }
 
+  // 7b. Máximo de días por semana en cada turno (mañana, tarde, noche... por separado)
+  for (const sh of shifts) {
+    if (sh.maxDaysPerWeek == null || !pattern.includes(sh.id)) continue
+    for (let w = anchorStart; w < anchorEnd; w++) {
+      let n = 0
+      for (let d = w; d < w + 7; d++) if (shiftAt(d)?.id === sh.id) n++
+      if (n > sh.maxDaysPerWeek) {
+        add(
+          SHIFT_WEEK_RULE,
+          cycleDay(w),
+          `Turno ${sh.name}: en los 7 días que empiezan el día ${cycleDay(w)} del ciclo hay ${n} días (máximo ${sh.maxDaysPerWeek}).`,
+        )
+      }
+    }
+  }
+
   // 8. Horas semanales medias y jornada anual
   if (rules.maxWeeklyAvgHours != null && stats.avgWeeklyHours > rules.maxWeeklyAvgHours) {
     add(
@@ -233,23 +260,31 @@ export function validatePattern(pattern: PatternItem[], shifts: Shift[], rules: 
       `La media es de ${stats.avgWeeklyHours} h semanales (máximo ${rules.maxWeeklyAvgHours} h).`,
     )
   }
-  const annual = (rule: RuleKey, limit: number | null, value: number, unit: string) => {
+  const holidayNote = stats.holidayWorkDays
+    ? stats.holidaysOff
+      ? ` y ${stats.holidayWorkDays} festivos que se libran`
+      : ` (incluye unos ${stats.holidayWorkDays} festivos trabajados)`
+    : ''
+  const annual = (limit: number | null, value: number, unit: string) => {
     if (limit == null) return
     if (value > limit) {
-      add(rule, null, `Se estiman ${value} ${unit} de trabajo al año descontando vacaciones (jornada anual: ${limit} ${unit}). Sobran ${value - limit} ${unit}.`)
+      notices.push(
+        `Exceso de jornada: con este cuadrante salen ${value} ${unit} al año descontando vacaciones${holidayNote}; ` +
+          `la jornada anual es de ${limit} ${unit}. Hay que dar ${value - limit} ${unit} libres por exceso de jornada.`,
+      )
     } else if (value < limit) {
       notices.push(
-        `Con este ciclo salen ${value} ${unit} de trabajo al año descontando vacaciones; la jornada anual es de ${limit} ${unit}. ` +
-          `Faltan ${limit - value} ${unit} (habría que recuperarlas con otro patrón o con jornadas adicionales).`,
+        `Defecto de jornada: con este cuadrante salen ${value} ${unit} al año descontando vacaciones${holidayNote}; ` +
+          `la jornada anual es de ${limit} ${unit}. Faltan ${limit - value} ${unit} (habría que recuperarlas con otro patrón o con jornadas adicionales).`,
       )
     }
   }
-  annual('maxAnnualWorkDays', rules.maxAnnualWorkDays, stats.netAnnualWorkDays, 'días')
-  annual('maxAnnualHours', rules.maxAnnualHours, stats.netAnnualHours, 'h')
+  annual(rules.maxAnnualWorkDays, stats.netAnnualWorkDays, 'días')
+  annual(rules.maxAnnualHours, stats.netAnnualHours, 'h')
 
   // Ordenamos por el orden del catálogo de reglas y por día.
   const order = RULE_DEFINITIONS.map((r) => r.key)
-  violations.sort((a, b) => order.indexOf(a.rule) - order.indexOf(b.rule) || (a.cycleDay ?? 0) - (b.cycleDay ?? 0))
+  violations.sort((a, b) => order.indexOf(a.rule as RuleKey) - order.indexOf(b.rule as RuleKey) || (a.cycleDay ?? 0) - (b.cycleDay ?? 0))
   return { violations, notices, stats }
 }
 

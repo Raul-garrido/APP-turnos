@@ -3,10 +3,13 @@
 
 import { dateRange, diffDays, mod, weekday } from './dates'
 import { computeOffsets, requiredOn, type OffsetResult } from './offsets'
+import { HOLIDAY_TREATMENT, VACATION_TYPE } from './rules'
+import { findShift, shiftDurationMinutes } from './shifts'
 import {
   OFF,
   type AbsenceKind,
   type BusinessConfig,
+  type EffectiveRules,
   type Holiday,
   type ISODate,
   type PatternItem,
@@ -187,4 +190,78 @@ export function vacationDaysUsed(
     }
   }
   return days.size
+}
+
+export interface AnnualBalanceRow {
+  teamId: string
+  /** Días y horas de trabajo que salen del cuadrante en ese año. */
+  workDays: number
+  workHours: number
+  /** Festivos que caen en día de trabajo del equipo. */
+  holidaysOnWork: number
+  /** Días de trabajo que se pierden por vacaciones (estimación según el convenio). */
+  vacationWorkDays: number
+  /** Días y horas efectivos: trabajo − vacaciones − festivos (si se libran). */
+  effectiveDays: number
+  effectiveHours: number
+  /** Diferencia con la jornada anual (positivo = exceso a dar libre; negativo = faltan). */
+  excessDays: number | null
+  excessHours: number | null
+}
+
+export interface AnnualBalance {
+  year: number
+  rows: AnnualBalanceRow[]
+  /** true si se usan las fechas de festivos introducidas; false si se estima con el número de festivos al año. */
+  realHolidays: boolean
+  holidayCount: number
+  holidaysOff: boolean
+}
+
+/** Balance de jornada anual de cada equipo para un año concreto del calendario. */
+export function annualBalance(
+  config: BusinessConfig,
+  rules: EffectiveRules,
+  year: number,
+  offsets = effectiveOffsets(config),
+): AnnualBalance {
+  const dates = dateRange(`${year}-01-01`, `${year}-12-31`)
+  const yearHolidays = config.holidays.filter((h) => h.date.startsWith(String(year)))
+  const realHolidays = yearHolidays.length > 0
+  const holidayCount = realHolidays ? yearHolidays.length : (rules.annualHolidays ?? 0)
+  const holidaysOff = rules.holidayTreatment === HOLIDAY_TREATMENT.SE_LIBRAN
+  const holidaySet = new Set(yearHolidays.map((h) => h.date))
+  const round1 = (n: number) => Math.round(n * 10) / 10
+
+  const rows = config.teams.map<AnnualBalanceRow>((team, t) => {
+    let workDays = 0
+    let minutes = 0
+    let holidaysOnWork = 0
+    for (const d of dates) {
+      const s = findShift(config.shifts, baseItem(config, offsets[t], d))
+      if (!s) continue
+      workDays++
+      minutes += shiftDurationMinutes(s)
+      if (holidaySet.has(d)) holidaysOnWork++
+    }
+    const ratio = workDays / dates.length
+    if (!realHolidays) holidaysOnWork = Math.round(holidayCount * ratio)
+    const vacation = rules.vacationDays ?? 0
+    const vacationWorkDays = Math.round(rules.vacationDayType === VACATION_TYPE.HABILES ? vacation : vacation * ratio)
+    const hoursPerDay = workDays ? minutes / 60 / workDays : 0
+    const effectiveDays = Math.max(workDays - vacationWorkDays - (holidaysOff ? holidaysOnWork : 0), 0)
+    const effectiveHours = Math.round(effectiveDays * hoursPerDay)
+    return {
+      teamId: team.id,
+      workDays,
+      workHours: round1(minutes / 60),
+      holidaysOnWork,
+      vacationWorkDays,
+      effectiveDays,
+      effectiveHours,
+      excessDays: rules.maxAnnualWorkDays != null ? effectiveDays - rules.maxAnnualWorkDays : null,
+      excessHours: rules.maxAnnualHours != null ? effectiveHours - rules.maxAnnualHours : null,
+    }
+  })
+  return { year, rows, realHolidays, holidayCount, holidaysOff }
 }

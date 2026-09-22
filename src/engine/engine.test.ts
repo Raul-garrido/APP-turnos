@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { buildSchedule, effectiveOffsets, vacationDaysUsed } from './calendar'
+import { annualBalance, buildSchedule, effectiveOffsets, vacationDaysUsed } from './calendar'
 import { addDays, weekday } from './dates'
 import { defaultConfig, defaultRuleSets, makeTeams } from './defaults'
-import { computeOffsets, coverageTable } from './offsets'
+import { computeOffsets, coverageTable, weekendStats } from './offsets'
 import { resolveRules, RULE_KEYS, SHIFT_MIX } from './rules'
 import { parsePatternText } from './shifts'
 import { OFF, type EffectiveRules } from './types'
@@ -69,13 +69,33 @@ describe('validación de reglas', () => {
     })
     // 365 * 12/18 = 243,3 días; vacaciones: 30 * 12/18 = 20 -> 223 días
     expect(r.stats.netAnnualWorkDays).toBe(223)
-    expect(r.violations.map((v) => v.rule)).toEqual(['maxAnnualWorkDays'])
+    // El exceso de jornada no es un incumplimiento: se avisa de los días a dar libres.
+    expect(r.violations).toHaveLength(0)
+    expect(r.notices[0]).toContain('Hay que dar 2 días libres por exceso de jornada')
   })
 
-  it('el ejemplo por defecto cumple las reglas del ejemplo salvo la jornada anual', () => {
+  it('festivos: si se libran se descuentan los que caen en día de trabajo', () => {
+    const rules = { ...noRules, vacationDays: 30, vacationDayType: 0, annualHolidays: 14, maxAnnualWorkDays: 221 }
+    const pat = p('M M M M L L T T T T L L N N N N L L')
+    expect(validatePattern(pat, shifts, { ...rules, holidayTreatment: 0 }).stats.netAnnualWorkDays).toBe(223)
+    // 14 festivos * 12/18 = 9,3 días de trabajo que se libran
+    expect(validatePattern(pat, shifts, { ...rules, holidayTreatment: 1 }).stats.netAnnualWorkDays).toBe(214)
+  })
+
+  it('máximo de días por semana en cada turno', () => {
+    const limited = shifts.map((s) => (s.id === N.id ? { ...s, maxDaysPerWeek: 3 } : s))
+    const r = validatePattern(p('N N N N L L L'), limited, noRules)
+    expect(r.violations.map((v) => v.rule)).toContain('shiftMaxDaysPerWeek')
+    expect(validatePattern(p('N N N L L L L'), limited, noRules).violations).toHaveLength(0)
+    // El límite de la noche no afecta a la mañana
+    expect(validatePattern(p('M M M M L L L'), limited, noRules).violations).toHaveLength(0)
+  })
+
+  it('el ejemplo por defecto cumple todas las reglas del ejemplo', () => {
     const { rules } = resolveRules(defaultRuleSets(), base.activeRuleSetIds, {})
     const r = validatePattern(base.pattern, shifts, rules)
-    expect(r.violations.map((v) => v.rule).sort()).toEqual(['maxAnnualHours', 'maxAnnualWorkDays'])
+    expect(r.violations).toHaveLength(0)
+    expect(r.notices.join(' ')).toContain('Exceso de jornada')
   })
 })
 
@@ -122,6 +142,27 @@ describe('desfases', () => {
     expect(computeOffsets(input('M M M M L L T T T T L L N N N N L L', 7)).deficit).toBe(0)
   })
 
+  it('libra los máximos fines de semana completos manteniendo la cobertura', () => {
+    // Ciclo semanal de 7 equipos, solo turno de mañana con 1 equipo mínimo, empezando en lunes.
+    const inp = {
+      ...input('M M M M M L L', 7),
+      coverage: [{ shiftId: M.id, min: 1, weekdays: [0, 1, 2, 3, 4, 5, 6] }],
+    }
+    const r = computeOffsets(inp)
+    expect(r.deficit).toBe(0)
+    const stats = weekendStats(inp.pattern, 0, r.offsets)
+    // Alguien tiene que trabajar el fin de semana: lo mejor es que 6 de los 7 equipos libren todos.
+    expect(stats.filter((s) => s.fullPerYear >= 52).length).toBe(6)
+  })
+
+  it('reparte los fines de semana de forma justa cuando el ciclo no es múltiplo de 7', () => {
+    const inp = input('M M M M L L T T T T L L N N N N L L', 7)
+    const stats = weekendStats(inp.pattern, 0, computeOffsets(inp).offsets)
+    const full = stats.map((s) => s.fullPerYear)
+    expect(Math.max(...full) - Math.min(...full)).toBeLessThanOrEqual(1)
+    expect(Math.min(...full)).toBeGreaterThan(0)
+  })
+
   it('usa búsqueda por mejora cuando hay demasiadas combinaciones', () => {
     const r = computeOffsets(input('M M M M M L L T T T T T L L N N N N N L L L L L L L L L', 9))
     expect(r.exhaustive).toBe(false)
@@ -164,6 +205,22 @@ describe('calendario y excepciones', () => {
     expect(vacationDaysUsed(withEx, ana.id, 2026, false, offsets)).toBe(6)
     // Equipo 1 (desfase 0): M M M M L L -> 4 días hábiles
     expect(vacationDaysUsed(withEx, ana.id, 2026, true, offsets)).toBe(4)
+  })
+
+  it('balance de jornada anual por equipo con festivos reales', () => {
+    const { rules } = resolveRules(defaultRuleSets(), base.activeRuleSetIds, {})
+    const bal = annualBalance(config, rules, 2026, offsets)
+    expect(bal.realHolidays).toBe(false)
+    expect(bal.holidayCount).toBe(14)
+    for (const r of bal.rows) {
+      expect(r.workDays).toBeGreaterThan(240)
+      expect(r.excessDays).toBe(r.effectiveDays - 221)
+    }
+    const withHolidays = { ...config, holidays: [{ date: '2026-01-06', name: 'Reyes' }] }
+    const b2 = annualBalance(withHolidays, { ...rules, holidayTreatment: 1 }, 2026, offsets)
+    expect(b2.realHolidays).toBe(true)
+    const worksThatDay = b2.rows.filter((r) => r.holidaysOnWork === 1).length
+    expect(worksThatDay).toBeGreaterThan(0)
   })
 
   it('regla "no mezclar turnos en la misma semana" sobre el calendario real', () => {

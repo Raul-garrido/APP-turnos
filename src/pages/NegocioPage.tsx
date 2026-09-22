@@ -78,7 +78,7 @@ function Turnos() {
     <Card title="Turnos" actions={<Button onClick={addShift}>+ Añadir turno</Button>}>
       <p className="mb-3 text-sm text-slate-600">
         La letra <b>L</b> está reservada para los días libres. Si la hora de fin es anterior a la de inicio, el turno acaba al día
-        siguiente.
+        siguiente. En «Máx. días/semana» puedes limitar cuántos días a la semana se hace cada turno (vacío = sin límite).
       </p>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -90,6 +90,7 @@ function Turnos() {
               <th className="p-1">Fin</th>
               <th className="p-1">Horas</th>
               <th className="p-1">Nocturno</th>
+              <th className="p-1" title="Máximo de días por semana en este turno">Máx. días/semana</th>
               <th className="p-1">Color</th>
               <th />
             </tr>
@@ -122,6 +123,19 @@ function Turnos() {
                   <td className="p-1 text-slate-600">{shiftHours(s)} h</td>
                   <td className="p-1 text-center">
                     <input type="checkbox" checked={s.isNight} onChange={(e) => set((sh) => void (sh.isNight = e.target.checked))} />
+                  </td>
+                  <td className="p-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={7}
+                      className={`${inputClass} w-20`}
+                      placeholder="Sin límite"
+                      value={s.maxDaysPerWeek ?? ''}
+                      onChange={(e) =>
+                        set((sh) => void (sh.maxDaysPerWeek = e.target.value === '' ? null : Math.max(0, e.target.valueAsNumber || 0)))
+                      }
+                    />
                   </td>
                   <td className="p-1">
                     <input type="color" value={s.color} onChange={(e) => set((sh) => void (sh.color = e.target.value))} />

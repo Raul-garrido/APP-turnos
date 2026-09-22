@@ -2,13 +2,13 @@
 
 import { useMemo, useState } from 'react'
 import { Alert, Button, Card, NumberInput, ShiftBadge, inputClass } from '../components/ui'
-import { autoOffsets, baseItem } from '../engine/calendar'
-import { addDays, formatDate, WEEKDAY_SHORT, weekday } from '../engine/dates'
-import { coverageDeficit, requiredOn } from '../engine/offsets'
+import { annualBalance, autoOffsets, baseItem } from '../engine/calendar'
+import { addDays, formatDate, todayISO, WEEKDAY_SHORT, weekday } from '../engine/dates'
+import { coverageDeficit, requiredOn, weekendStats } from '../engine/offsets'
 import { ruleDefinition, SHIFT_MIX } from '../engine/rules'
 import { findShift, itemCode, parsePatternText } from '../engine/shifts'
-import { OFF } from '../engine/types'
-import { checkShiftMixByCalendarWeek, describeTeamWeekViolation, type Violation } from '../engine/validation'
+import { OFF, type RuleKey } from '../engine/types'
+import { checkShiftMixByCalendarWeek, describeTeamWeekViolation, SHIFT_WEEK_RULE, type Violation } from '../engine/validation'
 import { useOffsets, useRules, useValidation } from '../store/derived'
 import { useStore } from '../store/useStore'
 
@@ -18,6 +18,7 @@ export function PatronPage() {
       <PatternEditor />
       <ValidationPanel />
       <OffsetsPanel />
+      <AnnualBalancePanel />
       <Preview />
     </div>
   )
@@ -116,7 +117,9 @@ function ValidationPanel() {
         {ok && <Alert kind="ok">El patrón cumple todas las reglas activas.</Alert>}
         {[...grouped.entries()].map(([rule, list]) => (
           <Alert key={rule} kind="error">
-            <div className="font-semibold">{ruleDefinition(rule as Violation['rule']).label}</div>
+            <div className="font-semibold">
+              {rule === SHIFT_WEEK_RULE ? 'Máximo de días por semana en un turno' : ruleDefinition(rule as RuleKey).label}
+            </div>
             <ul className="ml-4 list-disc">
               {list.slice(0, 3).map((v, i) => (
                 <li key={i}>{v.message}</li>
@@ -236,6 +239,114 @@ function OffsetsPanel() {
           </div>
         ))}
       </div>
+      <WeekendSummary offsets={offsets} />
+    </Card>
+  )
+}
+
+function WeekendSummary({ offsets }: { offsets: number[] }) {
+  const config = useStore((s) => s.config)
+  const L = config.pattern.length
+  const stats = useMemo(
+    () => weekendStats(config.pattern, weekday(config.startDate), offsets),
+    [config.pattern, config.startDate, offsets],
+  )
+  if (!L) return null
+  const fixedDays = L % 7 === 0
+  return (
+    <div className="mt-4">
+      <h3 className="mb-1 text-sm font-semibold text-slate-700">Fines de semana libres al año</h3>
+      <p className="mb-2 text-xs text-slate-500">
+        Requisito fijo del cálculo: los desfases se eligen para librar los máximos fines de semana completos (sábado y domingo
+        seguidos) y repartirlos de forma justa entre los equipos, siempre que se mantenga la cobertura.{' '}
+        {fixedDays
+          ? `Como el ciclo (${L} días) es múltiplo de 7, cada equipo libra siempre los mismos días de la semana.`
+          : `Como el ciclo (${L} días) no es múltiplo de 7, los días libres van cambiando de día de la semana y, con el tiempo, todos los equipos libran los mismos fines de semana.`}{' '}
+        Para librar más fines de semana hay que cambiar el patrón (por ejemplo, un ciclo de 7, 14, 21 o 28 días con los libres en sábado y domingo).
+      </p>
+      <div className="flex flex-wrap gap-2 text-sm">
+        {config.teams.map((t, i) => (
+          <div key={t.id} className="rounded-lg bg-slate-50 px-2 py-1">
+            <span className="font-medium">{t.name}:</span> {stats[i]?.fullPerYear ?? 0} completos
+            <span className="text-slate-500"> · {stats[i]?.partialPerYear ?? 0} medios</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function AnnualBalancePanel() {
+  const config = useStore((s) => s.config)
+  const offsets = useOffsets()
+  const { rules } = useRules()
+  const [year, setYear] = useState(Number(todayISO().slice(0, 4)))
+  const bal = useMemo(() => annualBalance(config, rules, year, offsets), [config, rules, year, offsets])
+  const fmt = (n: number | null, unit: string) =>
+    n == null ? '—' : n > 0 ? `+${n} ${unit}` : n < 0 ? `${n} ${unit}` : `0 ${unit}`
+  const tone = (n: number | null) => (n == null || n === 0 ? 'text-slate-700' : n > 0 ? 'text-amber-700' : 'text-red-600')
+  return (
+    <Card
+      title={`Balance de jornada anual ${year}`}
+      actions={
+        <>
+          <Button onClick={() => setYear(year - 1)} aria-label="Año anterior">
+            ←
+          </Button>
+          <Button onClick={() => setYear(year + 1)} aria-label="Año siguiente">
+            →
+          </Button>
+        </>
+      }
+    >
+      <div className="mb-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+        <Stat label="Jornada anual (convenio)" value={`${rules.maxAnnualWorkDays ?? '—'} días · ${rules.maxAnnualHours ?? '—'} h`} />
+        <Stat label="Vacaciones" value={`${rules.vacationDays ?? 0} días ${rules.vacationDayType === 1 ? 'hábiles' : 'naturales'}`} />
+        <Stat
+          label="Festivos"
+          value={`${bal.holidayCount} · ${bal.holidaysOff ? 'se libran' : 'se trabajan'}`}
+          sub={bal.realHolidays ? 'Fechas reales de «Negocio»' : 'Estimación: aún no has puesto las fechas de este año'}
+        />
+        <Stat label="Exceso positivo" value="Días a dar libres" sub="Negativo: días que faltan" />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm tabular-nums">
+          <thead className="text-left text-slate-500">
+            <tr>
+              <th className="p-1">Equipo</th>
+              <th className="p-1">Días en cuadrante</th>
+              <th className="p-1">Festivos en día de trabajo</th>
+              <th className="p-1">− Vacaciones</th>
+              <th className="p-1">Días efectivos</th>
+              <th className="p-1">Horas efectivas</th>
+              <th className="p-1">Exceso (días)</th>
+              <th className="p-1">Exceso (horas)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bal.rows.map((r) => (
+              <tr key={r.teamId} className="border-t border-slate-100">
+                <td className="p-1 font-medium">{config.teams.find((t) => t.id === r.teamId)?.name}</td>
+                <td className="p-1">{r.workDays}</td>
+                <td className="p-1">
+                  {r.holidaysOnWork}
+                  <span className="text-slate-400">{bal.holidaysOff ? ' (se restan)' : ' (se trabajan)'}</span>
+                </td>
+                <td className="p-1">{r.vacationWorkDays}</td>
+                <td className="p-1 font-semibold">{r.effectiveDays}</td>
+                <td className="p-1 font-semibold">{r.effectiveHours} h</td>
+                <td className={`p-1 font-semibold ${tone(r.excessDays)}`}>{fmt(r.excessDays, 'días')}</td>
+                <td className={`p-1 font-semibold ${tone(r.excessHours)}`}>{fmt(r.excessHours, 'h')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-slate-500">
+        Días efectivos = días de trabajo del cuadrante en el año − días de trabajo que caen en vacaciones
+        {bal.holidaysOff ? ' − festivos que caen en día de trabajo' : ''}. El exceso es lo que hay que compensar con días libres por
+        exceso de jornada. Cambia los festivos, las vacaciones y la jornada anual en «Normativa».
+      </p>
     </Card>
   )
 }

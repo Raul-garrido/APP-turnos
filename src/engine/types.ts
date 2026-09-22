@@ -23,6 +23,8 @@ export interface Shift {
   color: string
   /** Marca el turno como nocturno (para la regla de noches seguidas). */
   isNight: boolean
+  /** Máximo de días por semana en este turno (vacío = sin límite). */
+  maxDaysPerWeek?: number | null
 }
 
 export interface Employee {
@@ -106,6 +108,8 @@ export type RuleKey =
   | 'maxAnnualWorkDays'
   | 'vacationDays'
   | 'vacationDayType'
+  | 'annualHolidays'
+  | 'holidayTreatment'
   | 'maxConsecutiveNights'
 
 /**

@@ -27,6 +27,8 @@ export interface RuleDefinition {
 export const SHIFT_MIX = { NUNCA: 0, TRAS_DESCANSO: 1, SIEMPRE: 2 } as const
 /** Valores de la regla "tipo de días de vacaciones". */
 export const VACATION_TYPE = { NATURALES: 0, HABILES: 1 } as const
+/** Valores de la regla "tratamiento de festivos". */
+export const HOLIDAY_TREATMENT = { SE_TRABAJAN: 0, SE_LIBRAN: 1 } as const
 
 export const RULE_GROUPS: { id: RuleDefinition['group']; label: string }[] = [
   { id: 'descansos', label: 'Descansos' },
@@ -124,17 +126,17 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     key: 'maxAnnualHours',
     group: 'jornada',
     label: 'Jornada anual en horas',
-    help: 'Horas de trabajo al año que fija el convenio. Se compara con la estimación del ciclo descontando vacaciones.',
+    help: 'Horas de trabajo al año que fija el convenio. Se compara con lo que sale del cuadrante descontando vacaciones (y festivos, si se libran): la diferencia es el exceso o el defecto de jornada.',
     unit: 'horas',
-    direction: 'max',
+    direction: 'param',
   },
   {
     key: 'maxAnnualWorkDays',
     group: 'jornada',
     label: 'Jornada anual en días',
-    help: 'Días de trabajo al año que fija el convenio. Se compara con la estimación del ciclo descontando vacaciones.',
+    help: 'Días de trabajo al año que fija el convenio. Se compara con lo que sale del cuadrante descontando vacaciones (y festivos, si se libran): la diferencia son los días de exceso de jornada que hay que dar libres.',
     unit: 'días',
-    direction: 'max',
+    direction: 'param',
   },
   {
     key: 'vacationDays',
@@ -154,6 +156,26 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     options: [
       { value: VACATION_TYPE.NATURALES, label: 'Naturales' },
       { value: VACATION_TYPE.HABILES, label: 'Hábiles (días de trabajo)' },
+    ],
+  },
+  {
+    key: 'annualHolidays',
+    group: 'jornada',
+    label: 'Festivos al año',
+    help: 'Número de festivos anuales (en general 14). Si has puesto las fechas en «Negocio», para ese año se usan las fechas reales.',
+    unit: 'días',
+    direction: 'param',
+  },
+  {
+    key: 'holidayTreatment',
+    group: 'jornada',
+    label: '¿Qué pasa con los festivos?',
+    help: 'Se trabajan: la rotación sigue igual y los festivos trabajados cuentan como jornada (si se supera la jornada anual, el exceso se compensa con días libres). Se libran: los festivos que caen en día de trabajo no se trabajan y se descuentan.',
+    unit: '',
+    direction: 'param',
+    options: [
+      { value: HOLIDAY_TREATMENT.SE_TRABAJAN, label: 'Se trabajan según el cuadrante' },
+      { value: HOLIDAY_TREATMENT.SE_LIBRAN, label: 'Se libran' },
     ],
   },
 ]
@@ -176,8 +198,8 @@ export const BUILTIN_RULE_SETS: RuleSet[] = [
     description:
       'Valores orientativos tomados del Estatuto de los Trabajadores (arts. 34 y 37): 12 h entre jornadas, ' +
       'máximo 9 h ordinarias diarias, 40 h semanales de media, día y medio de descanso semanal (el Estatuto permite acumularlo en 14 días: ' +
-      'cambia el periodo a 14 y el descanso a 72 h si te interesa) ' +
-      'y 30 días naturales de vacaciones. ' +
+      'cambia el periodo a 14 y el descanso a 72 h si te interesa), ' +
+      '30 días naturales de vacaciones y 14 festivos al año. ' +
       'Existen excepciones (RD 1561/1995) y el convenio puede cambiar estos valores: verifícalos.',
     values: {
       minRestBetweenShiftsHours: 12,
@@ -187,6 +209,7 @@ export const BUILTIN_RULE_SETS: RuleSet[] = [
       weeklyRestMinHours: 36,
       vacationDays: 30,
       vacationDayType: 0,
+      annualHolidays: 14,
     },
   },
 ]
