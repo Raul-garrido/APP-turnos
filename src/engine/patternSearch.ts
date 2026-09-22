@@ -13,10 +13,10 @@
 import { mod } from './dates'
 import { requiredOn } from './offsets'
 import { findShift } from './shifts'
-import { OFF, type BusinessConfig, type EffectiveRules, type PatternItem } from './types'
+import { OFF, type BusinessConfig, type EffectiveRules, type PatternItem, type SearchPriority } from './types'
 import { patternStats, validatePattern } from './validation'
 
-export type SearchPriority = 'findes' | 'equilibrio'
+export type { SearchPriority }
 
 export interface PatternSearchOptions {
   /** 'findes': máximos fines de semana libres; 'equilibrio': también ajustarse a la jornada anual. */
@@ -203,4 +203,17 @@ export function suggestPattern(config: BusinessConfig, rules: EffectiveRules, op
     excessDays: target != null ? st.netAnnualWorkDays - target : null,
     excessHours: rules.maxAnnualHours != null ? st.netAnnualHours - rules.maxAnnualHours : null,
   }
+}
+
+/** Fines de semana completos libres al año que como mucho puede tener cada equipo con esta cobertura. */
+export function maxFullWeekendsPerYear(config: BusinessConfig): number {
+  const N = config.teams.length
+  if (!N) return 0
+  const avgSize = config.teams.reduce((a, t) => a + t.employees.length, 0) / N
+  const weight = config.coverageMode === 'equipos' ? 1 : avgSize || 1
+  const active = config.coverage.filter((c) => c.min > 0 && findShift(config.shifts, c.shiftId))
+  const needSat = active.reduce((a, c) => a + requiredOn(c, SAT), 0) / weight
+  const needSun = active.reduce((a, c) => a + requiredOn(c, SUN), 0) / weight
+  const weeks = Math.max(0, N - Math.ceil(Math.max(needSat, needSun)))
+  return Math.round((weeks / N) * WEEKS_PER_YEAR)
 }

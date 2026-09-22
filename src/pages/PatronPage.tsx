@@ -7,17 +7,36 @@ import { addDays, formatDate, startOfWeek, todayISO, WEEKDAY_SHORT, weekday } fr
 import { coverageDeficit, requiredOn, weekendStats } from '../engine/offsets'
 import { ruleDefinition, SHIFT_MIX } from '../engine/rules'
 import { findShift, itemCode, parsePatternText } from '../engine/shifts'
-import type { PatternSuggestion, SearchPriority } from '../engine/patternSearch'
-import { OFF, type RuleKey } from '../engine/types'
+import { maxFullWeekendsPerYear, type PatternSuggestion } from '../engine/patternSearch'
+import { OFF, type PatternItem, type RuleKey, type SearchPriority } from '../engine/types'
 import { checkShiftMixByCalendarWeek, describeTeamWeekViolation, SHIFT_WEEK_RULE, type Violation } from '../engine/validation'
 import { useOffsets, useRules, useValidation } from '../store/derived'
+import { useGenStatus } from '../store/autoGenerate'
 import { useStore } from '../store/useStore'
 
 export function PatronPage() {
+  const mode = useStore((s) => s.config.patternMode)
+  const update = useStore((s) => s.updateConfig)
   return (
     <div className="flex flex-col gap-4">
-      <PatternEditor />
-      <PatternFinder />
+      {mode === 'manual' ? (
+        <>
+          <Alert kind="info">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Modo avanzado: estás escribiendo el patrón a mano. La app ya no lo genera sola hasta que vuelvas al modo automático.
+              </span>
+              <Button variant="primary" onClick={() => update((c) => void ((c.patternMode = 'auto'), (c.autoKey = undefined)))}>
+                Volver a generación automática
+              </Button>
+            </div>
+          </Alert>
+          <PatternEditor />
+          <PatternFinder />
+        </>
+      ) : (
+        <AutoRotation />
+      )}
       <ValidationPanel />
       <OffsetsPanel />
       <AnnualBalancePanel />
@@ -86,6 +105,97 @@ function PatternEditor() {
   )
 }
 
+function AutoRotation() {
+  const config = useStore((s) => s.config)
+  const update = useStore((s) => s.updateConfig)
+  const gen = useGenStatus()
+  const max = maxFullWeekendsPerYear(config)
+  const offsets = useOffsets()
+  const minFull = useMemo(() => {
+    const w = weekendStats(config.pattern, weekday(config.startDate), offsets)
+    return w.length ? Math.min(...w.map((x) => x.fullPerYear)) : 0
+  }, [config.pattern, config.startDate, offsets])
+  const running = gen.state === 'running'
+  return (
+    <Card title="Rotación generada automáticamente">
+      <p className="mb-3 text-sm text-slate-600">
+        No tienes que diseñar nada: la app genera sola la rotación a partir de los equipos, turnos y cobertura de «Negocio» y de las
+        reglas de «Normativa», y la vuelve a generar cada vez que cambias algo. Busca siempre cumplir la cobertura y todas las reglas,
+        y librar los máximos fines de semana completos (sábado y domingo juntos), igual para todos los equipos. Cada equipo empieza el
+        ciclo una semana después que el anterior.
+      </p>
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium text-slate-700">Después de la cobertura y las reglas, priorizar</span>
+          <select
+            className={inputClass}
+            value={config.autoPriority}
+            onChange={(e) => update((c) => void (c.autoPriority = e.target.value as SearchPriority))}
+          >
+            <option value="findes">Máximos fines de semana libres</option>
+            <option value="equilibrio">Fines de semana y ajustarse a la jornada anual</option>
+          </select>
+        </label>
+        <Button disabled={running} onClick={() => update((c) => void (c.autoSeed = (c.autoSeed ?? 1) + 1))}>
+          {running ? 'Generando…' : 'Generar otra opción'}
+        </Button>
+        <Button variant="ghost" onClick={() => update((c) => void (c.patternMode = 'manual'))}>
+          Prefiero escribir el patrón a mano (avanzado)
+        </Button>
+      </div>
+      {running ? (
+        <Alert kind="info">Generando la rotación…</Alert>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+            <Stat
+              label="Fines de semana completos libres al año"
+              value={`${minFull} por equipo`}
+              sub={`Máximo posible con esta cobertura: ${max}`}
+            />
+            <Stat label="Ciclo" value={`${config.pattern.length} días (${Math.round(config.pattern.length / 7)} semanas)`} />
+            <Stat label="Equipos" value={`${config.teams.length}`} sub="Todos hacen la misma rotación" />
+          </div>
+          <WeekGrid pattern={config.pattern} />
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function WeekGrid({ pattern }: { pattern: PatternItem[] }) {
+  const shifts = useStore((s) => s.config.shifts)
+  const weeks = Math.ceil(pattern.length / 7)
+  return (
+    <div className="overflow-x-auto">
+      <table className="border-separate border-spacing-0.5 text-xs">
+        <thead>
+          <tr>
+            <th />
+            {WEEKDAY_SHORT.map((d, i) => (
+              <th key={i} className={`w-8 text-center font-normal ${i >= 5 ? 'text-indigo-700' : 'text-slate-500'}`}>
+                {d}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: weeks }, (_, w) => (
+            <tr key={w}>
+              <td className="pr-2 whitespace-nowrap text-slate-500">Semana {w + 1}</td>
+              {pattern.slice(w * 7, w * 7 + 7).map((item, d) => (
+                <td key={d}>
+                  <ShiftBadge code={itemCode(shifts, item)} color={findShift(shifts, item)?.color ?? '#fff'} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function PatternFinder() {
   const config = useStore((s) => s.config)
   const update = useStore((s) => s.updateConfig)
@@ -128,7 +238,7 @@ function PatternFinder() {
   const unequal = config.coverageMode === 'personas' && new Set(config.teams.map((t) => t.employees.length)).size > 1
 
   return (
-    <Card title="Buscar patrón con los máximos fines de semana libres">
+    <Card title="Proponer un patrón con los máximos fines de semana libres">
       <p className="mb-3 text-sm text-slate-600">
         La app diseña un ciclo de {config.teams.length} semanas (una por equipo; cada equipo empieza una semana después que el anterior)
         colocando los días libres en sábado y domingo siempre que se pueda, cumpliendo la cobertura y todas las reglas activas. Cada
@@ -177,32 +287,7 @@ function PatternFinder() {
               compatibles con {config.teams.length} equipos.
             </Alert>
           )}
-          <div className="overflow-x-auto">
-            <table className="border-separate border-spacing-0.5 text-xs">
-              <thead>
-                <tr>
-                  <th />
-                  {WEEKDAY_SHORT.map((d, i) => (
-                    <th key={i} className={`w-8 text-center font-normal ${i >= 5 ? 'text-indigo-700' : 'text-slate-500'}`}>
-                      {d}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from({ length: result.weeks }, (_, w) => (
-                  <tr key={w}>
-                    <td className="pr-2 whitespace-nowrap text-slate-500">Semana {w + 1}</td>
-                    {result.pattern.slice(w * 7, w * 7 + 7).map((item, d) => (
-                      <td key={d}>
-                        <ShiftBadge code={itemCode(config.shifts, item)} color={findShift(config.shifts, item)?.color ?? '#fff'} />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <WeekGrid pattern={result.pattern} />
           <div>
             <Button variant="primary" onClick={apply}>
               Usar este patrón
@@ -313,25 +398,29 @@ function OffsetsPanel() {
 
   return (
     <Card title="Desfase de los equipos">
-      <div className="mb-3 flex flex-wrap items-center gap-4 text-sm">
-        <label className="flex items-center gap-2">
-          <input type="radio" checked={config.offsetMode === 'auto'} onChange={() => update((c) => void (c.offsetMode = 'auto'))} />
-          Automático (la app busca el mejor reparto)
-        </label>
-        <label className="flex items-center gap-2">
-          <input
-            type="radio"
-            checked={config.offsetMode === 'manual'}
-            onChange={() =>
-              update((c) => {
-                c.offsetMode = 'manual'
-                c.teams.forEach((t, i) => (t.offset = offsets[i]))
-              })
-            }
-          />
-          Manual (escribo yo los días de desfase)
-        </label>
-      </div>
+      {config.patternMode === 'manual' && (
+        <>
+          <div className="mb-3 flex flex-wrap items-center gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input type="radio" checked={config.offsetMode === 'auto'} onChange={() => update((c) => void (c.offsetMode = 'auto'))} />
+              Automático (la app busca el mejor reparto)
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={config.offsetMode === 'manual'}
+                onChange={() =>
+                  update((c) => {
+                    c.offsetMode = 'manual'
+                    c.teams.forEach((t, i) => (t.offset = offsets[i]))
+                  })
+                }
+              />
+              Manual (escribo yo los días de desfase)
+            </label>
+          </div>
+        </>
+      )}
       <p className="mb-3 text-sm text-slate-600">
         Rotación equitativa: todos los equipos hacen exactamente el mismo patrón, solo que empezando en días distintos. Así, a lo
         largo del ciclo, todos trabajan las mismas horas y los mismos turnos de mañana, tarde y noche.
@@ -355,7 +444,7 @@ function OffsetsPanel() {
         {config.teams.map((t, i) => (
           <div key={t.id} className="flex items-center gap-2 rounded-lg border border-slate-200 px-2 py-1 text-sm">
             <span className="font-medium">{t.name}</span>
-            {config.offsetMode === 'manual' ? (
+            {config.patternMode === 'manual' && config.offsetMode === 'manual' ? (
               <NumberInput
                 className="w-16"
                 min={0}

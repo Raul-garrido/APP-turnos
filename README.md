@@ -1,9 +1,10 @@
 # Cuadrante de turnos (PWA)
 
-Aplicación web para generar cuadrantes de turnos por **equipos con rotación cíclica**:
-se define un único patrón (p. ej. `M M M M L L T T T T L L N N N N L L`) y la app
-calcula el desfase de cada equipo para cubrir todos los turnos, comprueba las reglas
-de descanso y jornada, y genera el calendario (semana, mes y año) con excepciones.
+Aplicación web que **genera sola** cuadrantes de turnos por **equipos con rotación cíclica**:
+el usuario introduce turnos, equipos, cobertura y las reglas de su convenio, y la app diseña
+automáticamente la rotación (cumpliendo cobertura y reglas, y librando los máximos fines de
+semana completos), calcula el balance de jornada anual y muestra el calendario (semana, mes y
+año) con excepciones. Se regenera sola cada vez que cambian los datos.
 
 > Aviso: la herramienta organiza turnos según los parámetros introducidos por el usuario.
 > No es asesoría legal ni garantiza el cumplimiento normativo.

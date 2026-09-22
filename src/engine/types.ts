@@ -74,6 +74,12 @@ export interface ScheduleException {
 
 export type OffsetMode = 'auto' | 'manual'
 
+/** Automático: la app diseña el patrón sola. Manual: el usuario escribe el patrón (modo avanzado). */
+export type PatternMode = 'auto' | 'manual'
+
+/** Qué prioriza la generación automática después de la cobertura y las reglas. */
+export type SearchPriority = 'findes' | 'equilibrio'
+
 export interface BusinessConfig {
   name: string
   /** Día en que el primer equipo empieza el ciclo (posición 1 del patrón). */
@@ -84,6 +90,12 @@ export interface BusinessConfig {
   coverageMode: CoverageMode
   coverage: CoverageRequirement[]
   offsetMode: OffsetMode
+  patternMode: PatternMode
+  autoPriority: SearchPriority
+  /** Cambia para pedir otra opción distinta del generador automático. */
+  autoSeed: number
+  /** Huella de los datos con los que se generó el patrón automático (para saber si hay que regenerarlo). */
+  autoKey?: string
   /** Marcos normativos activos, en orden: los últimos mandan sobre los primeros. */
   activeRuleSetIds: string[]
   /** Ajustes propios del negocio: se aplican encima de todos los marcos normativos. */

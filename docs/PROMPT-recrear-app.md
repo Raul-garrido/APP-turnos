@@ -6,7 +6,10 @@ Copia todo lo que hay debajo de la línea y pégalo en la otra herramienta.
 
 Quiero que construyas una aplicación web **PWA** (instalable en PC y móvil, que funcione sin conexión) llamada **"Cuadrante de turnos"**, en **español**, para que negocios pequeños y medianos (hasta 30-35 empleados, un solo centro y un solo convenio) generen cuadrantes de turnos por **equipos con rotación cíclica**. Soy principiante: explícame en lenguaje sencillo lo que hagas.
 
-## Idea clave (no es un asignador individual)
+## Idea clave: el cuadrante se genera SOLO
+El usuario **no diseña el patrón**: solo introduce los datos (turnos, equipos y personas, cobertura, festivos) y las reglas (Estatuto/convenio). La app **genera automáticamente** la rotación y el calendario, y los **vuelve a generar sola** cada vez que cambia algo que influye (equipos, turnos, cobertura, reglas). Escribir el patrón a mano queda solo como "modo avanzado" opcional.
+
+## Cómo funciona por dentro (no es un asignador individual)
 - Los empleados se agrupan en **equipos fijos** (número de equipos y personas por equipo configurables; los equipos pueden tener tamaños distintos).
 - Hay **un único patrón de ciclo** (p. ej. `M M M M L L T T T T L L N N N N L L`, donde L = libre) que siguen **todos los equipos**, cada uno con un **desfase** en días.
 - El día D (contado desde la "fecha de inicio del ciclo"), el equipo con desfase `o` está en la posición `(D − o) mod L` del patrón (L = longitud del ciclo). El calendario **no se guarda**: se calcula siempre a partir de la configuración. Solo se guardan configuración y excepciones.
@@ -68,31 +71,35 @@ El exceso o defecto frente a la jornada anual **no es un error**: es un aviso "E
 - Búsqueda exhaustiva si hay pocas combinaciones (equipos iguales → combinaciones no decrecientes con el primero en 0, más los L desplazamientos globales). Si hay demasiadas, búsqueda por mejora con 30 arranques aleatorios con semilla fija.
 - Mostrar el desfase de cada equipo, si la cobertura está garantizada, y los fines de semana libres al año de cada equipo (completos y medios), con una nota: si L no es múltiplo de 7, con el tiempo todos libran los mismos fines de semana; si lo es, cada equipo libra siempre los mismos días de la semana.
 
-## Buscador de patrón con los máximos fines de semana libres (patternSearch.ts)
+## Generador automático del patrón (patternSearch.ts) — es el flujo principal
+- Se ejecuta **solo**: un hook montado en la raíz calcula una "huella" (tamaños de equipos, turnos con horas/nocturno/máx. por semana, cobertura, modo de cobertura, reglas efectivas, prioridad y semilla). Si difiere de la huella guardada con el último patrón generado, espera 700 ms (por si el usuario sigue escribiendo) y lanza la generación en un **Web Worker**. Al terminar guarda el patrón, pone la fecha de inicio en lunes y los desfases de una semana por equipo, y guarda la huella. Mientras genera, aparece una barra "Generando el cuadrante automáticamente…"; si no consigue cumplir todo, una barra roja lo explica.
 - Diseña un ciclo de **tantas semanas como equipos** (7 equipos → 49 días) con desfases de una semana por equipo (0, 7, 14…). Así la cobertura de cada día de la semana es la suma de todas las semanas del ciclo.
 - Cada semana del ciclo = un tipo de turno + una máscara de 7 días de trabajo (solo máscaras con al menos los días libres por semana exigidos).
 - **Recocido simulado** (12.000 iteraciones, 3 reinicios, semilla configurable). Movimientos: cambiar un día, cambiar el turno de una semana, intercambiar dos semanas, nueva máscara o nueva semana al azar.
 - Coste: `huecos×10000 + incumplimientos×1000 − findes_completos×peso − findes_medios×5 + |días_netos − jornada_anual|×peso2 + bloques_de_trabajo×2`. Prioridad "Máximos fines de semana" (peso 100, peso2 1) o "Equilibrio con la jornada anual" (20 y 6). Descarta sin validar del todo los candidatos que empeoran mucho la cobertura, para ir rápido.
 - Máximo teórico de semanas con fin de semana completo = `equipos − equipos que tienen que trabajar el sábado/domingo`.
-- Se ejecuta en un **Web Worker**. La interfaz muestra: fines de semana completos al año "X de Y posibles", medios, jornada neta y exceso, reglas cumplidas, cobertura, y una tabla Semana 1…N × L M X J V S D. Botones "Buscar patrón", "Buscar otra opción" (otra semilla) y "Usar este patrón" (aplica el patrón, lleva la fecha de inicio al lunes y pone desfases manuales de una semana por equipo).
+- La pantalla "Rotación y jornada" muestra la rotación generada (tabla Semana 1…N × L M X J V S D), fines de semana completos por equipo frente al máximo posible, el selector de prioridad ("Máximos fines de semana libres" o "Fines de semana y ajustarse a la jornada anual"), un botón "Generar otra opción" (cambia la semilla y regenera) y un enlace "Prefiero escribir el patrón a mano (avanzado)". En modo avanzado aparecen el editor del patrón, el cálculo de desfases automático/manual y un botón "Volver a generación automática".
 - Con 7 equipos de 4 personas, M/T/N 24/7 con 1 equipo por turno y el convenio de ejemplo, debe encontrar **30 fines de semana completos al año (el máximo)**, cumpliendo todo, en unos 2 segundos.
 
 ## Balance de jornada anual (por equipo y año, con selector de año)
 Columnas: días de trabajo en el cuadrante, festivos que caen en día de trabajo (fechas reales si se han introducido para ese año; si no, estimación con "festivos al año"), días de trabajo perdidos por vacaciones, **días y horas efectivos**, **exceso en días y en horas** (positivo = días a dar libres; negativo = faltan). Muestra jornada anual del convenio, vacaciones y cómo se tratan los festivos.
 
 ## Pantallas
+Orden de pestañas: 1. Negocio, 2. Normativa, 3. Cuadrante, Rotación y jornada, Datos.
+
 1. **Negocio**: nombre, fecha de inicio del ciclo, tabla de turnos (con "Máx. días/semana"), equipos (generador "N equipos de M personas", renombrar, añadir, quitar o mover personas entre equipos), cobertura (modo y mínimo por turno con botones L M X J V S D), festivos.
 2. **Normativa**: lista de marcos (activar, ordenar ↑↓, ver/editar, duplicar, exportar, eliminar, importar, nuevo convenio), editor de reglas con los tres estados, ajustes propios del negocio, tabla "Reglas que se aplican ahora".
-3. **Patrón y equipos**:
-   - Editor del patrón: texto con o sin espacios, casillas que cambian al pulsarlas, botones "+M +T +N +L" y "Quitar último".
-   - Buscador de patrón, comprobación de reglas, desfases (automático/manual, nota de rotación equitativa, fines de semana por equipo), balance de jornada anual.
-   - Vista previa de los equipos con la cobertura diaria.
-4. **Calendario**:
+3. **Cuadrante** (el calendario generado):
    - Vistas semana / mes / año, con navegación y botón "Hoy". En semana y mes: filas por persona agrupadas por equipo. En año: una tabla por mes, filas por equipo.
    - Festivos resaltados; cambios manuales marcados con borde rojo y el turno original en el tooltip. Pulsar una casilla abre el formulario de excepción con la persona y la fecha ya puestas.
    - Filas de cobertura diaria en verde o rojo, avisos de cobertura (turnos bajo mínimo, equipos con ausencias).
    - Lista de excepciones y contador de vacaciones por persona (usadas / pendientes, naturales o hábiles).
    - Exportar a **Excel** (colores por turno, festivos, bordes rojos en cambios, cobertura, leyenda, aviso legal; una hoja por mes en vista anual) y **PDF** (A4 horizontal, una página por semana/mes).
+4. **Rotación y jornada**:
+   - Rotación generada automáticamente (ver arriba) y comprobación de reglas.
+   - Desfases de cada equipo con la nota de rotación equitativa y los fines de semana por equipo.
+   - Balance de jornada anual y vista previa con la cobertura diaria.
+   - En modo avanzado: editor del patrón (texto con o sin espacios, casillas que cambian al pulsarlas, botones "+M +T +N +L" y "Quitar último").
 5. **Datos**: aviso de que los datos están solo en este navegador, descargar/restaurar copia de seguridad JSON, restablecer el ejemplo.
 
 ## Aviso legal (siempre visible)

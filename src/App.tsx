@@ -5,13 +5,14 @@ import { NegocioPage } from './pages/NegocioPage'
 import { NormativaPage } from './pages/NormativaPage'
 import { PatronPage } from './pages/PatronPage'
 import { DISCLAIMER } from './export/table'
+import { useAutoGenerate, useGenStatus } from './store/autoGenerate'
 import { useStore } from './store/useStore'
 
 const TABS = [
   { id: 'negocio', label: '1. Negocio', Page: NegocioPage },
   { id: 'normativa', label: '2. Normativa', Page: NormativaPage },
-  { id: 'patron', label: '3. Patrón y equipos', Page: PatronPage },
-  { id: 'calendario', label: '4. Calendario', Page: CalendarioPage },
+  { id: 'calendario', label: '3. Cuadrante', Page: CalendarioPage },
+  { id: 'patron', label: 'Rotación y jornada', Page: PatronPage },
   { id: 'datos', label: 'Datos', Page: DatosPage },
 ] as const
 
@@ -26,6 +27,8 @@ export default function App() {
     }
   })
   const name = useStore((s) => s.config.name)
+  useAutoGenerate()
+  const gen = useGenStatus()
   const current = TABS.find((t) => t.id === tab) ?? TABS[0]
   const select = (id: TabId) => {
     setTab(id)
@@ -60,6 +63,14 @@ export default function App() {
           </nav>
         </div>
       </header>
+      {gen.state === 'running' && (
+        <div className="border-b border-indigo-200 bg-indigo-50 px-4 py-2 text-center text-sm text-indigo-800">
+          Generando el cuadrante automáticamente con tus datos y reglas…
+        </div>
+      )}
+      {gen.state === 'error' && gen.message && (
+        <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-sm text-red-800">{gen.message}</div>
+      )}
       <main className="mx-auto max-w-7xl px-4 py-4">
         <current.Page />
       </main>
