@@ -237,12 +237,22 @@ describe('búsqueda de patrón', () => {
   it('encuentra un patrón con fines de semana libres que cumple reglas y cobertura', async () => {
     const { suggestPattern } = await import('./patternSearch')
     const { rules } = resolveRules(defaultRuleSets(), base.activeRuleSetIds, {})
-    const r = suggestPattern(base, rules, { priority: 'findes', seed: 1, iterations: 4000 })!
+    const r = suggestPattern(base, rules, { priority: 'findes', seed: 1, iterations: 8000 })!
     expect(r.pattern).toHaveLength(49)
     expect(r.coverageDeficit).toBe(0)
     expect(r.violations).toBe(0)
     expect(r.maxFullWeekendsPerYear).toBe(30)
     expect(r.fullWeekendsPerYear).toBeGreaterThanOrEqual(22)
+    // No debe haber saltos directos entre el primer y el último turno (p. ej. noche -> mañana):
+    // solo se puede pasar por el turno vecino en el orden de horas de inicio.
+    const order = [...base.shifts].sort((a, b) => a.start.localeCompare(b.start)).map((s) => s.id)
+    for (let w = 0; w < r.weeks; w++) {
+      const cur = r.pattern[w * 7]
+      const prev = r.pattern[((w - 1 + r.weeks) % r.weeks) * 7]
+      if (cur !== prev && cur !== OFF && prev !== OFF) {
+        expect(Math.abs(order.indexOf(cur) - order.indexOf(prev))).toBeLessThanOrEqual(1)
+      }
+    }
     // Aplicado al calendario real, con una semana de desfase por equipo, la cobertura sigue completa.
     const cfg = { ...base, pattern: r.pattern, startDate: '2026-01-05', offsetMode: 'manual' as const,
       teams: base.teams.map((t, i) => ({ ...t, offset: r.offsets[i] })) }

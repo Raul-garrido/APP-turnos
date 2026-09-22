@@ -120,10 +120,18 @@ function AutoRotation() {
     <Card title="Rotación generada automáticamente">
       <p className="mb-3 text-sm text-slate-600">
         No tienes que diseñar nada: la app genera sola la rotación a partir de los equipos, turnos y cobertura de «Negocio» y de las
-        reglas de «Normativa», y la vuelve a generar cada vez que cambias algo. Busca siempre cumplir la cobertura y todas las reglas,
-        y librar los máximos fines de semana completos (sábado y domingo juntos), igual para todos los equipos. Cada equipo empieza el
+        reglas de «Normativa», y la vuelve a generar cada vez que cambias algo. Cada equipo hace tramos de varias semanas seguidas en
+        el mismo turno (no cambia cada pocos días) y solo pasa al turno «vecino» en el orden del día (mañana → tarde → noche → mañana…),
+        nunca salta directamente del primero al último. Busca cumplir la cobertura y todas las reglas, librar los máximos fines de
+        semana completos (sábado y domingo juntos) igual para todos los equipos, y ajustarse a la jornada anual. Cada equipo empieza el
         ciclo una semana después que el anterior.
       </p>
+      <Alert kind="info">
+        Para que el turno de noche pueda hacer una semana completa de 7 días seguidos (y así no perder ningún fin de semana en los
+        turnos de mañana o tarde), el descanso semanal tiene que poder repartirse en <b>14 días</b> en vez de 7 (en «Normativa» → regla
+        «Periodo de cálculo del descanso semanal»). Es una opción que el propio Estatuto permite. Con periodo de 7 días, la app sigue
+        generando un horario válido, pero con alguna semana más corta para no incumplir el descanso.
+      </Alert>
       <div className="mb-3 flex flex-wrap items-end gap-2">
         <label className="flex flex-col gap-1 text-sm">
           <span className="font-medium text-slate-700">Después de la cobertura y las reglas, priorizar</span>
@@ -154,7 +162,11 @@ function AutoRotation() {
               sub={`Máximo posible con esta cobertura: ${max}`}
             />
             <Stat label="Ciclo" value={`${config.pattern.length} días (${Math.round(config.pattern.length / 7)} semanas)`} />
-            <Stat label="Equipos" value={`${config.teams.length}`} sub="Todos hacen la misma rotación" />
+            <Stat
+              label="Cambios de turno en el ciclo"
+              value={`${gen.result?.shiftChanges ?? '—'}`}
+              sub="Menos cambios = bloques más largos y homogéneos"
+            />
           </div>
           <WeekGrid pattern={config.pattern} />
         </div>
