@@ -9,7 +9,7 @@ import { ruleDefinition, SHIFT_MIX } from '../engine/rules'
 import { findShift, itemCode, parsePatternText } from '../engine/shifts'
 import { maxFullWeekendsPerYear, type PatternSuggestion } from '../engine/patternSearch'
 import { OFF, type PatternItem, type RuleKey, type SearchPriority } from '../engine/types'
-import { checkShiftMixByCalendarWeek, describeTeamWeekViolation, SHIFT_WEEK_RULE, type Violation } from '../engine/validation'
+import { checkShiftMixByCalendarWeek, describeTeamWeekViolation, SHIFT_STREAK_RULE, SHIFT_WEEK_RULE, type Violation } from '../engine/validation'
 import { useOffsets, useRules, useValidation } from '../store/derived'
 import { useGenStatus } from '../store/autoGenerate'
 import { useStore } from '../store/useStore'
@@ -345,7 +345,11 @@ function ValidationPanel() {
         {[...grouped.entries()].map(([rule, list]) => (
           <Alert key={rule} kind="error">
             <div className="font-semibold">
-              {rule === SHIFT_WEEK_RULE ? 'Máximo de días por semana en un turno' : ruleDefinition(rule as RuleKey).label}
+              {rule === SHIFT_WEEK_RULE
+                ? 'Máximo de días por semana en un turno'
+                : rule === SHIFT_STREAK_RULE
+                  ? 'Máximo de días seguidos en un turno'
+                  : ruleDefinition(rule as RuleKey).label}
             </div>
             <ul className="ml-4 list-disc">
               {list.slice(0, 3).map((v, i) => (

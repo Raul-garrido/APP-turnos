@@ -9,9 +9,11 @@ import { OFF, type EffectiveRules, type ISODate, type PatternItem, type RuleKey,
 
 /** Regla propia de cada turno (máximo de días por semana), que no está en el catálogo general. */
 export const SHIFT_WEEK_RULE = 'shiftMaxDaysPerWeek'
+/** Regla propia de cada turno (días seguidos), tampoco está en el catálogo general. */
+export const SHIFT_STREAK_RULE = 'shiftMaxConsecutiveDays'
 
 export interface Violation {
-  rule: RuleKey | typeof SHIFT_WEEK_RULE
+  rule: RuleKey | typeof SHIFT_WEEK_RULE | typeof SHIFT_STREAK_RULE
   /** Día del ciclo (1 = primer día) donde se detecta, o null si afecta a todo el ciclo. */
   cycleDay: number | null
   message: string
@@ -252,6 +254,27 @@ export function validatePattern(pattern: PatternItem[], shifts: Shift[], rules: 
     }
   }
 
+  // 7c. Máximo de días SEGUIDOS en cada turno (de un día para otro, aunque cruce de una semana a la
+  // siguiente): es distinto del máximo por semana de arriba, que solo mira bloques de 7 días fijos.
+  for (const sh of shifts) {
+    if (sh.maxConsecutiveDays == null || !pattern.includes(sh.id)) continue
+    if (pattern.every((p) => p === sh.id)) {
+      add(SHIFT_STREAK_RULE, null, `Turno ${sh.name}: el ciclo no tiene ninguna interrupción, se encadena sin fin.`)
+      continue
+    }
+    let run = 0
+    for (let d = 0; d < anchorEnd; d++) {
+      run = shiftAt(d)?.id === sh.id ? run + 1 : 0
+      if (d >= anchorStart && run === sh.maxConsecutiveDays + 1) {
+        add(
+          SHIFT_STREAK_RULE,
+          cycleDay(d),
+          `Turno ${sh.name}: se encadenan más de ${sh.maxConsecutiveDays} días seguidos (se supera en el día ${cycleDay(d)} del ciclo).`,
+        )
+      }
+    }
+  }
+
   // 8. Horas semanales medias y jornada anual
   if (rules.maxWeeklyAvgHours != null && stats.avgWeeklyHours > rules.maxWeeklyAvgHours) {
     add(
@@ -283,7 +306,7 @@ export function validatePattern(pattern: PatternItem[], shifts: Shift[], rules: 
   annual(rules.maxAnnualHours, stats.netAnnualHours, 'h')
 
   // Ordenamos por el orden del catálogo de reglas y por día.
-  const order = RULE_DEFINITIONS.map((r) => r.key)
+  const order = [...RULE_DEFINITIONS.map((r) => r.key), SHIFT_WEEK_RULE, SHIFT_STREAK_RULE]
   violations.sort((a, b) => order.indexOf(a.rule as RuleKey) - order.indexOf(b.rule as RuleKey) || (a.cycleDay ?? 0) - (b.cycleDay ?? 0))
   return { violations, notices, stats }
 }

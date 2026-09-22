@@ -25,6 +25,8 @@ export interface Shift {
   isNight: boolean
   /** Máximo de días por semana en este turno (vacío = sin límite). */
   maxDaysPerWeek?: number | null
+  /** Máximo de días SEGUIDOS en este turno, contando de un día para otro aunque cambie de semana (vacío = sin límite). */
+  maxConsecutiveDays?: number | null
 }
 
 export interface Employee {

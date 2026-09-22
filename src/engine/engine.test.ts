@@ -6,7 +6,7 @@ import { computeOffsets, coverageTable, weekendStats } from './offsets'
 import { resolveRules, RULE_KEYS, SHIFT_MIX } from './rules'
 import { parsePatternText } from './shifts'
 import { OFF, type EffectiveRules } from './types'
-import { checkShiftMixByCalendarWeek, validatePattern } from './validation'
+import { checkShiftMixByCalendarWeek, SHIFT_STREAK_RULE, validatePattern } from './validation'
 
 const noRules = Object.fromEntries(RULE_KEYS.map((k) => [k, null])) as EffectiveRules
 const base = defaultConfig()
@@ -37,9 +37,17 @@ describe('validación de reglas', () => {
   })
 
   it('cuenta días seguidos trabajados', () => {
-    const r = validatePattern(p('M M M M M M M L'), shifts, { ...noRules, maxConsecutiveWorkDays: 6 })
+    // Sin límite por turno (aparte, el ejemplo por defecto sí trae uno: se prueba más abajo).
+    const noStreakShifts = shifts.map((s) => ({ ...s, maxConsecutiveDays: null }))
+    const r = validatePattern(p('M M M M M M M L'), noStreakShifts, { ...noRules, maxConsecutiveWorkDays: 6 })
     expect(r.violations).toHaveLength(1)
-    expect(validatePattern(p('M M M M M M L'), shifts, { ...noRules, maxConsecutiveWorkDays: 6 }).violations).toHaveLength(0)
+    expect(validatePattern(p('M M M M M M L'), noStreakShifts, { ...noRules, maxConsecutiveWorkDays: 6 }).violations).toHaveLength(0)
+  })
+
+  it('máximo de días seguidos por turno (aunque cruce de una semana a la siguiente)', () => {
+    const limited = shifts.map((s) => (s.id === M.id ? { ...s, maxConsecutiveDays: 5 } : { ...s, maxConsecutiveDays: null }))
+    expect(validatePattern(p('M M M M M L L'), limited, noRules).violations).toHaveLength(0)
+    expect(validatePattern(p('M M M M M M L'), limited, noRules).violations.map((v) => v.rule)).toEqual([SHIFT_STREAK_RULE])
   })
 
   it('cambio de turno solo tras descansar', () => {
@@ -237,7 +245,8 @@ describe('búsqueda de patrón', () => {
   it('encuentra un patrón con fines de semana libres que cumple reglas y cobertura', async () => {
     const { suggestPattern } = await import('./patternSearch')
     const { rules } = resolveRules(defaultRuleSets(), base.activeRuleSetIds, {})
-    const r = suggestPattern(base, rules, { priority: 'findes', seed: 1, iterations: 8000 })!
+    // Sin iterations: usa el modo con reintentos internos (varias semillas), más fiable.
+    const r = suggestPattern(base, rules, { priority: 'findes', seed: 1 })!
     expect(r.pattern).toHaveLength(49)
     expect(r.coverageDeficit).toBe(0)
     expect(r.violations).toBe(0)
@@ -258,5 +267,5 @@ describe('búsqueda de patrón', () => {
       teams: base.teams.map((t, i) => ({ ...t, offset: r.offsets[i] })) }
     const days = buildSchedule(cfg, '2026-01-05', '2026-06-30')
     expect(days.every((d) => d.coverage.every((c) => c.ok))).toBe(true)
-  }, 30000)
+  }, 90000)
 })

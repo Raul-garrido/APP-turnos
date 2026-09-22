@@ -78,7 +78,9 @@ function Turnos() {
     <Card title="Turnos" actions={<Button onClick={addShift}>+ Añadir turno</Button>}>
       <p className="mb-3 text-sm text-slate-600">
         La letra <b>L</b> está reservada para los días libres. Si la hora de fin es anterior a la de inicio, el turno acaba al día
-        siguiente. En «Máx. días/semana» puedes limitar cuántos días a la semana se hace cada turno (vacío = sin límite).
+        siguiente. «Máx. días/semana» mira bloques fijos de 7 días; «Máx. días seguidos» cuenta de un día para otro aunque cambie de
+        semana (evita, por ejemplo, que dos semanas de mañana consecutivas se junten en un bloque más largo de lo que quieres). Vacío
+        en cualquiera de los dos = sin límite.
       </p>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -90,7 +92,8 @@ function Turnos() {
               <th className="p-1">Fin</th>
               <th className="p-1">Horas</th>
               <th className="p-1">Nocturno</th>
-              <th className="p-1" title="Máximo de días por semana en este turno">Máx. días/semana</th>
+              <th className="p-1" title="Máximo de días por semana en este turno (mira bloques fijos de 7 días)">Máx. días/semana</th>
+              <th className="p-1" title="Máximo de días SEGUIDOS en este turno, aunque pase de una semana a la siguiente">Máx. días seguidos</th>
               <th className="p-1">Color</th>
               <th />
             </tr>
@@ -134,6 +137,20 @@ function Turnos() {
                       value={s.maxDaysPerWeek ?? ''}
                       onChange={(e) =>
                         set((sh) => void (sh.maxDaysPerWeek = e.target.value === '' ? null : Math.max(0, e.target.valueAsNumber || 0)))
+                      }
+                    />
+                  </td>
+                  <td className="p-1">
+                    <input
+                      type="number"
+                      min={1}
+                      className={`${inputClass} w-20`}
+                      placeholder="Sin límite"
+                      value={s.maxConsecutiveDays ?? ''}
+                      onChange={(e) =>
+                        set(
+                          (sh) => void (sh.maxConsecutiveDays = e.target.value === '' ? null : Math.max(1, e.target.valueAsNumber || 1)),
+                        )
                       }
                     />
                   </td>

@@ -20,7 +20,7 @@
 
 import { mod } from './dates'
 import { requiredOn } from './offsets'
-import { findShift, parseTime } from './shifts'
+import { findShift, parseTime, shiftDurationMinutes } from './shifts'
 import { OFF, type BusinessConfig, type EffectiveRules, type PatternItem, type SearchPriority } from './types'
 import { patternStats, validatePattern } from './validation'
 
@@ -77,7 +77,7 @@ function seededRandom(seed: number) {
   }
 }
 
-export function suggestPattern(config: BusinessConfig, rules: EffectiveRules, opts: PatternSearchOptions): PatternSuggestion | null {
+function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: PatternSearchOptions): PatternSuggestion | null {
   const N = config.teams.length
   const active = config.coverage.filter((c) => c.min > 0 && c.weekdays.length > 0 && findShift(config.shifts, c.shiftId))
   const shiftIds = active.map((c) => c.shiftId)
@@ -123,7 +123,9 @@ export function suggestPattern(config: BusinessConfig, rules: EffectiveRules, op
     weeks.flatMap((w) => Array.from({ length: 7 }, (_, d) => (bit(w.mask, d) ? shiftIds[w.shift] : OFF)))
 
   const target = rules.maxAnnualWorkDays
-  const prio = opts.priority === 'findes' ? { weekend: 100, dev: 1 } : { weekend: 20, dev: 6 }
+  // La prioridad ya solo decide cuánto se prima el fin de semana frente al reparto fino; la
+  // jornada anual (días y horas) se exige siempre, no depende de la prioridad elegida.
+  const prio = opts.priority === 'findes' ? { weekend: 100 } : { weekend: 20 }
 
   // Cobertura por día de la semana: suma de todas las semanas del ciclo. Es barata de calcular.
   const coverageDeficitOf = (weeks: Week[]) => {
@@ -138,20 +140,49 @@ export function suggestPattern(config: BusinessConfig, rules: EffectiveRules, op
     return deficit
   }
 
-  // Coste de los cambios de turno de una semana a la siguiente (para el mismo equipo, que pasa
-  // por las semanas del ciclo en orden y vuelve a empezar): 0 si no cambia, un coste moderado si
-  // cambia a un turno vecino (bloques más cortos, pero es un cambio "seguro") y muy alto si salta
-  // más de un turno de golpe (p. ej. de noche a mañana sin pasar por tarde).
+  // Duración de cada turno en minutos, y el descanso mínimo exigido (12 h si no hay regla).
+  const durationMin = shiftIds.map((id) => shiftDurationMinutes(findShift(config.shifts, id)!))
+  const minRestMin = (rules.minRestBetweenShiftsHours ?? 12) * 60
+
+  // Último día trabajado dentro de una semana (según su máscara) y minutos desde el lunes 00:00
+  // en que termina ese turno; y primer día trabajado y minutos en que empieza. undefined si la
+  // semana no tiene ningún día de trabajo.
+  const weekEdges = (w: Week) => {
+    let first = -1
+    let last = -1
+    for (let d = 0; d < 7; d++) if (bit(w.mask, d)) {
+      if (first < 0) first = d
+      last = d
+    }
+    if (first < 0) return null
+    return { startMin: first * 1440 + parseTime(findShift(config.shifts, shiftIds[w.shift])!.start), endMin: last * 1440 + parseTime(findShift(config.shifts, shiftIds[w.shift])!.start) + durationMin[w.shift] }
+  }
+
+  // Coste de pasar de una semana a la siguiente (para el mismo equipo, que pasa por las semanas
+  // del ciclo en orden y vuelve a empezar, semana tras semana, para siempre):
+  // - Si el turno no cambia, nada.
+  // - Si cambia, un coste moderado si es al turno vecino (mañana<->tarde, tarde<->noche) y muy
+  //   alto si salta directamente entre los dos extremos (p. ej. mañana<->noche).
+  // - Además, el descanso REAL entre el último turno trabajado de la semana anterior y el primero
+  //   de la siguiente (en horas, no solo "qué turno es") tiene que llegar al mínimo: una noche que
+  //   acaba el domingo por la mañana dificilmente llega a las 12 h si el lunes se empieza de tarde.
   const transitionCostOf = (weeks: Week[]) => {
     let cost = 0
     let changes = 0
     for (let i = 0; i < weeks.length; i++) {
-      const prev = weeks[mod(i - 1, weeks.length)].shift
-      const cur = weeks[i].shift
-      if (prev === cur) continue
-      changes++
-      const gap = Math.abs(rank[cur] - rank[prev])
-      cost += gap > 1 ? 6_000 : 120
+      const prevW = weeks[mod(i - 1, weeks.length)]
+      const curW = weeks[i]
+      if (prevW.shift !== curW.shift) {
+        changes++
+        const gap = Math.abs(rank[curW.shift] - rank[prevW.shift])
+        cost += gap > 1 ? 6_000 : 120
+      }
+      const pe = weekEdges(prevW)
+      const ce = weekEdges(curW)
+      if (pe && ce) {
+        const restMin = ce.startMin + 10080 - pe.endMin // 10080 = minutos de una semana
+        if (restMin < minRestMin) cost += (minRestMin - restMin) * 8
+      }
     }
     return { cost, changes }
   }
@@ -168,25 +199,44 @@ export function suggestPattern(config: BusinessConfig, rules: EffectiveRules, op
     const pattern = toPattern(weeks)
     const { violations } = validatePattern(pattern, config.shifts, rules)
     const stats = patternStats(pattern, config.shifts, rules)
-    const dev = target != null ? Math.abs(stats.netAnnualWorkDays - target) : 0
+    // La jornada anual no es una preferencia, es un requisito: los días no se pueden pasar del
+    // máximo (si se pasan, cuenta casi como un incumplimiento) y las horas tienen que quedar lo
+    // más cerca posible del objetivo (por debajo o por encima), casi siempre a menos de una
+    // jornada (8 h) de diferencia.
+    const daysExcess = target != null ? Math.max(0, stats.netAnnualWorkDays - target) : 0
+    const hoursTarget = rules.maxAnnualHours
+    const hoursDev = hoursTarget != null ? Math.abs(stats.netAnnualHours - hoursTarget) : 0
     const { cost: transitionCost, changes } = transitionCostOf(weeks)
+    // Los pesos están escalonados a propósito: nada de lo que viene después de "violations" puede
+    // llegar nunca a compensar una sola regla incumplida (por eso su peso es tan alto). Dentro de
+    // "ya sin incumplimientos", primero cuenta el fin de semana y después, mucho más fino, las
+    // horas exactas y los cambios de turno.
     const cost =
-      deficit * 10_000 + violations.length * 1_000 - full * prio.weekend - partial * 5 + dev * prio.dev + transitionCost
-    return { cost, deficit, violations: violations.length, full, partial, stats, changes }
+      deficit * 10_000_000 +
+      violations.length * 50_000 +
+      daysExcess * 400 +
+      hoursDev * 20 -
+      full * prio.weekend -
+      partial * 5 +
+      transitionCost
+    return { cost, deficit, violations: violations.length, full, partial, stats, changes, hoursDev }
   }
 
   const rng = seededRandom(opts.seed)
   const pick = <T,>(arr: T[]) => arr[Math.floor(rng() * arr.length)]
   const randomWeek = (): Week => ({ shift: Math.floor(rng() * S), mask: pick(masks) })
 
+  const maxConsecutive = shiftIds.map((id) => findShift(config.shifts, id)!.maxConsecutiveDays ?? Infinity)
+
   const mutate = (weeks: Week[]): Week[] => {
     const next = weeks.map((w) => ({ ...w }))
     const r = rng()
     const i = Math.floor(rng() * N)
     if (r < 0.3) {
-      // Alargar un bloque: copiar el turno de la semana vecina (junta dos bloques en uno).
+      // Alargar un bloque: copiar el turno de la semana vecina (junta dos bloques en uno), pero
+      // no si ese turno tiene un máximo de días seguidos (una sola semana ya puede llegar a 7 días).
       const j = rng() < 0.5 ? mod(i - 1, N) : mod(i + 1, N)
-      next[i] = { ...next[j] }
+      if (!Number.isFinite(maxConsecutive[next[j].shift])) next[i] = { ...next[j] }
     } else if (r < 0.45) {
       // Cambiar un día de la semana (trabajo <-> libre), si sigue siendo una semana válida.
       const m = next[i].mask ^ (1 << Math.floor(rng() * 7))
@@ -217,7 +267,7 @@ export function suggestPattern(config: BusinessConfig, rules: EffectiveRules, op
     }))
   }
 
-  const iterations = opts.iterations ?? 24_000
+  const iterations = opts.iterations ?? 36_000
   const restarts = 3
   let best = initial()
   let bestEval = evaluate(best)
@@ -241,6 +291,34 @@ export function suggestPattern(config: BusinessConfig, rules: EffectiveRules, op
         }
       }
     }
+  }
+
+  // Segunda pasada, solo si ya hay una solución válida (sin huecos ni incumplimientos): afinar las
+  // horas anuales sin arriesgar esa validez. Es una subida por colina normal (no recocido: aquí ya
+  // no interesa aceptar nada peor), que solo se queda con cambios que sigan sin dar ningún hueco ni
+  // incumplimiento y se acerquen más a la jornada anual. Con la prioridad "findes" no toca los
+  // fines de semana ya conseguidos; con "equilibrio" puede ceder algún fin de semana si así se
+  // acerca de verdad a las horas exactas.
+  if (bestEval.deficit === 0 && bestEval.violations === 0) {
+    let cur = best
+    let curEval = bestEval
+    const steps = Math.floor(iterations / 2)
+    const keepWeekends = opts.priority === 'findes'
+    for (let k = 0; k < steps && curEval.hoursDev > 4; k++) {
+      const cand = mutate(cur)
+      const deficit = coverageDeficitOf(cand)
+      if (deficit !== 0) continue
+      const e = evaluate(cand, deficit)
+      const better =
+        e.violations === 0 &&
+        (keepWeekends ? e.full >= curEval.full && e.hoursDev < curEval.hoursDev : e.hoursDev < curEval.hoursDev)
+      if (better) {
+        cur = cand
+        curEval = e
+      }
+    }
+    best = cur
+    bestEval = curEval
   }
 
   // Máximo teórico: cada fin de semana tienen que trabajar al menos los equipos que exige la cobertura.
@@ -278,4 +356,40 @@ export function maxFullWeekendsPerYear(config: BusinessConfig): number {
   const needSun = active.reduce((a, c) => a + requiredOn(c, SUN), 0) / weight
   const weeks = Math.max(0, N - Math.ceil(Math.max(needSat, needSun)))
   return Math.round((weeks / N) * WEEKS_PER_YEAR)
+}
+
+/**
+ * Igual que una sola búsqueda, pero prueba varias semillas internamente (partiendo de la que se
+ * le pasa) y se queda con la mejor: primero la que tenga menos huecos de cobertura, luego menos
+ * incumplimientos de reglas, luego más fines de semana y más cerca de la jornada anual. Con
+ * restricciones muy ajustadas (por ejemplo, pocos días seguidos permitidos por turno) una sola
+ * búsqueda no siempre encuentra la mejor solución posible; probar varias sube mucho las
+ * probabilidades sin que el usuario tenga que pulsar "generar otra opción" a mano.
+ */
+export function suggestPattern(config: BusinessConfig, rules: EffectiveRules, opts: PatternSearchOptions): PatternSuggestion | null {
+  const attempts = opts.iterations != null ? 1 : 3
+  const perAttempt = opts.iterations ?? 13_000
+  // Cuanto más bajo, mejor: primero sin huecos de cobertura, luego sin incumplimientos, luego
+  // más fines de semana, luego lo más cerca posible de la jornada anual en horas.
+  const rank = (r: PatternSuggestion) => [r.coverageDeficit, r.violations, -r.fullWeekendsPerYear, Math.abs(r.excessHours ?? 0)]
+  const better = (a: number[], b: number[]) => {
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] < b[i]) return true
+      if (a[i] > b[i]) return false
+    }
+    return false
+  }
+  let best: PatternSuggestion | null = null
+  let bestRank: number[] = []
+  for (let a = 0; a < attempts; a++) {
+    const r = suggestOnce(config, rules, { ...opts, seed: opts.seed + a * 104_729, iterations: perAttempt })
+    if (!r) continue
+    const rk = rank(r)
+    if (!best || better(rk, bestRank)) {
+      best = r
+      bestRank = rk
+    }
+    if (best.violations === 0 && best.coverageDeficit === 0) break
+  }
+  return best
 }
