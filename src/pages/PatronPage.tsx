@@ -1,12 +1,13 @@
 // Definición del patrón de ciclo, validación contra las reglas y desfases de los equipos.
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, NumberInput, ShiftBadge, inputClass } from '../components/ui'
 import { annualBalance, autoOffsets, baseItem } from '../engine/calendar'
-import { addDays, formatDate, todayISO, WEEKDAY_SHORT, weekday } from '../engine/dates'
+import { addDays, formatDate, startOfWeek, todayISO, WEEKDAY_SHORT, weekday } from '../engine/dates'
 import { coverageDeficit, requiredOn, weekendStats } from '../engine/offsets'
 import { ruleDefinition, SHIFT_MIX } from '../engine/rules'
 import { findShift, itemCode, parsePatternText } from '../engine/shifts'
+import type { PatternSuggestion, SearchPriority } from '../engine/patternSearch'
 import { OFF, type RuleKey } from '../engine/types'
 import { checkShiftMixByCalendarWeek, describeTeamWeekViolation, SHIFT_WEEK_RULE, type Violation } from '../engine/validation'
 import { useOffsets, useRules, useValidation } from '../store/derived'
@@ -16,6 +17,7 @@ export function PatronPage() {
   return (
     <div className="flex flex-col gap-4">
       <PatternEditor />
+      <PatternFinder />
       <ValidationPanel />
       <OffsetsPanel />
       <AnnualBalancePanel />
@@ -80,6 +82,134 @@ function PatternEditor() {
           Quitar último
         </Button>
       </div>
+    </Card>
+  )
+}
+
+function PatternFinder() {
+  const config = useStore((s) => s.config)
+  const update = useStore((s) => s.updateConfig)
+  const { rules } = useRules()
+  const [priority, setPriority] = useState<SearchPriority>('findes')
+  const [seed, setSeed] = useState(1)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<PatternSuggestion | null>(null)
+  const [tried, setTried] = useState(false)
+  const workerRef = useRef<Worker | null>(null)
+  useEffect(() => () => workerRef.current?.terminate(), [])
+
+  const search = (nextSeed: number) => {
+    workerRef.current?.terminate()
+    const worker = new Worker(new URL('../engine/patternSearch.worker.ts', import.meta.url), { type: 'module' })
+    workerRef.current = worker
+    setBusy(true)
+    setSeed(nextSeed)
+    worker.onmessage = (e: MessageEvent<PatternSuggestion | null>) => {
+      setResult(e.data)
+      setTried(true)
+      setBusy(false)
+      worker.terminate()
+    }
+    worker.postMessage({ config, rules, opts: { priority, seed: nextSeed } })
+  }
+
+  const apply = () => {
+    if (!result) return
+    if (!confirm('Se sustituirá el patrón actual por el encontrado y los desfases pasarán a ser de una semana por equipo. ¿Continuar?')) return
+    update((c) => {
+      c.pattern = result.pattern
+      c.startDate = startOfWeek(c.startDate)
+      c.offsetMode = 'manual'
+      c.teams.forEach((t, i) => (t.offset = result.offsets[i] ?? 0))
+    })
+  }
+
+  const unit = (n: number | null, u: string) => (n == null ? '—' : n > 0 ? `+${n} ${u}` : `${n} ${u}`)
+  const unequal = config.coverageMode === 'personas' && new Set(config.teams.map((t) => t.employees.length)).size > 1
+
+  return (
+    <Card title="Buscar patrón con los máximos fines de semana libres">
+      <p className="mb-3 text-sm text-slate-600">
+        La app diseña un ciclo de {config.teams.length} semanas (una por equipo; cada equipo empieza una semana después que el anterior)
+        colocando los días libres en sábado y domingo siempre que se pueda, cumpliendo la cobertura y todas las reglas activas. Cada
+        búsqueda tarda unos segundos; si pulsas «Buscar otra opción» saldrá una alternativa distinta.
+      </p>
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium text-slate-700">Después de la cobertura y las reglas, priorizar</span>
+          <select className={inputClass} value={priority} onChange={(e) => setPriority(e.target.value as SearchPriority)}>
+            <option value="findes">Máximos fines de semana libres</option>
+            <option value="equilibrio">Fines de semana y ajustarse a la jornada anual</option>
+          </select>
+        </label>
+        <Button variant="primary" disabled={busy} onClick={() => search(seed)}>
+          {busy ? 'Buscando…' : 'Buscar patrón'}
+        </Button>
+        {result && (
+          <Button disabled={busy} onClick={() => search(seed + 1)}>
+            Buscar otra opción
+          </Button>
+        )}
+      </div>
+      {unequal && (
+        <Alert kind="warning">Los equipos tienen tamaños distintos: la búsqueda usa el tamaño medio y conviene revisar la cobertura.</Alert>
+      )}
+      {tried && !result && <Alert kind="error">Define al menos un turno con cobertura mínima y un equipo para poder buscar.</Alert>}
+      {result && (
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+            <Stat
+              label="Fines de semana completos al año"
+              value={`${result.fullWeekendsPerYear} de ${result.maxFullWeekendsPerYear} posibles`}
+              sub={`${result.partialWeekendsPerYear} medios (solo sábado o domingo)`}
+            />
+            <Stat
+              label="Jornada al año (desc. vacaciones)"
+              value={`${result.netAnnualWorkDays} días · ${result.netAnnualHours} h`}
+              sub={`Exceso: ${unit(result.excessDays, 'días')} · ${unit(result.excessHours, 'h')}`}
+            />
+            <Stat label="Reglas" value={result.violations === 0 ? 'Cumple todas' : `${result.violations} incumplimientos`} />
+            <Stat label="Cobertura" value={result.coverageDeficit === 0 ? 'Completa todos los días' : 'Con huecos'} />
+          </div>
+          {(result.violations > 0 || result.coverageDeficit > 0) && (
+            <Alert kind="warning">
+              No se ha encontrado un patrón que cumpla todo. Prueba «Buscar otra opción» o revisa si las reglas y la cobertura son
+              compatibles con {config.teams.length} equipos.
+            </Alert>
+          )}
+          <div className="overflow-x-auto">
+            <table className="border-separate border-spacing-0.5 text-xs">
+              <thead>
+                <tr>
+                  <th />
+                  {WEEKDAY_SHORT.map((d, i) => (
+                    <th key={i} className={`w-8 text-center font-normal ${i >= 5 ? 'text-indigo-700' : 'text-slate-500'}`}>
+                      {d}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: result.weeks }, (_, w) => (
+                  <tr key={w}>
+                    <td className="pr-2 whitespace-nowrap text-slate-500">Semana {w + 1}</td>
+                    {result.pattern.slice(w * 7, w * 7 + 7).map((item, d) => (
+                      <td key={d}>
+                        <ShiftBadge code={itemCode(config.shifts, item)} color={findShift(config.shifts, item)?.color ?? '#fff'} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <Button variant="primary" onClick={apply}>
+              Usar este patrón
+            </Button>
+          </div>
+        </div>
+      )}
     </Card>
   )
 }

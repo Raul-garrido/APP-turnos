@@ -232,3 +232,21 @@ describe('calendario y excepciones', () => {
     expect(T.id && N.id).toBeTruthy()
   })
 })
+
+describe('búsqueda de patrón', () => {
+  it('encuentra un patrón con fines de semana libres que cumple reglas y cobertura', async () => {
+    const { suggestPattern } = await import('./patternSearch')
+    const { rules } = resolveRules(defaultRuleSets(), base.activeRuleSetIds, {})
+    const r = suggestPattern(base, rules, { priority: 'findes', seed: 1, iterations: 4000 })!
+    expect(r.pattern).toHaveLength(49)
+    expect(r.coverageDeficit).toBe(0)
+    expect(r.violations).toBe(0)
+    expect(r.maxFullWeekendsPerYear).toBe(30)
+    expect(r.fullWeekendsPerYear).toBeGreaterThanOrEqual(22)
+    // Aplicado al calendario real, con una semana de desfase por equipo, la cobertura sigue completa.
+    const cfg = { ...base, pattern: r.pattern, startDate: '2026-01-05', offsetMode: 'manual' as const,
+      teams: base.teams.map((t, i) => ({ ...t, offset: r.offsets[i] })) }
+    const days = buildSchedule(cfg, '2026-01-05', '2026-06-30')
+    expect(days.every((d) => d.coverage.every((c) => c.ok))).toBe(true)
+  }, 30000)
+})
