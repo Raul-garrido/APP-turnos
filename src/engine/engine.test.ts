@@ -268,4 +268,24 @@ describe('búsqueda de patrón', () => {
     const days = buildSchedule(cfg, '2026-01-05', '2026-06-30')
     expect(days.every((d) => d.coverage.every((c) => c.ok))).toBe(true)
   }, 90000)
+
+  it('la noche va en un único bloque seguido y no pasa de 1/3 del año', async () => {
+    const { suggestPattern } = await import('./patternSearch')
+    const rules = { ...resolveRules(defaultRuleSets(), base.activeRuleSetIds, {}).rules, maxNightSharePerYear: 1 / 3 }
+    const r = suggestPattern(base, rules, { priority: 'findes', seed: 2 })!
+    expect(r.violations).toBe(0)
+    expect(r.coverageDeficit).toBe(0)
+    const nightId = N.id
+    // Contamos los tramos de semanas de noche seguidas en el ciclo (circular): tiene que haber solo uno.
+    let blocks = 0
+    for (let w = 0; w < r.weeks; w++) {
+      const cur = r.pattern[w * 7] === nightId || r.pattern.slice(w * 7, w * 7 + 7).includes(nightId)
+      const prevW = (w - 1 + r.weeks) % r.weeks
+      const prev = r.pattern.slice(prevW * 7, prevW * 7 + 7).includes(nightId)
+      if (cur && !prev) blocks++
+    }
+    expect(blocks).toBe(1)
+    const nightDays = r.pattern.filter((x) => x === nightId).length
+    expect(nightDays / r.pattern.length).toBeLessThanOrEqual(1 / 3 + 1e-9)
+  }, 60000)
 })

@@ -172,6 +172,19 @@ export function validatePattern(pattern: PatternItem[], shifts: Shift[], rules: 
   checkStreak('maxConsecutiveWorkDays', rules.maxConsecutiveWorkDays, (d) => !!shiftAt(d), 'días trabajados')
   checkStreak('maxConsecutiveNights', rules.maxConsecutiveNights, (d) => !!shiftAt(d)?.isNight, 'turnos de noche')
 
+  // 4b. Máximo de noche al año (para no pasar a considerarse "trabajador nocturno")
+  if (rules.maxNightSharePerYear != null && pattern.some((_, i) => shiftAt(i)?.isNight)) {
+    const nightDays = pattern.filter((_, i) => shiftAt(i)?.isNight).length
+    const share = nightDays / L
+    if (share > rules.maxNightSharePerYear + 1e-9) {
+      add(
+        'maxNightSharePerYear',
+        null,
+        `El turno de noche ocupa el ${Math.round(share * 1000) / 10}% del ciclo (máximo ${Math.round(rules.maxNightSharePerYear * 1000) / 10}%): se pasaría a considerar trabajador nocturno.`,
+      )
+    }
+  }
+
   // 5. Cambio de tipo de turno solo tras descansar
   const changeNeedsRest =
     rules.shiftMixInWeek === SHIFT_MIX.TRAS_DESCANSO || (rules.shiftMixInWeek == null && rules.shiftChangeMinDaysOff != null)

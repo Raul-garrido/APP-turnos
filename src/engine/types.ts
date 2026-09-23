@@ -124,6 +124,7 @@ export type RuleKey =
   | 'vacationDayType'
   | 'annualHolidays'
   | 'holidayTreatment'
+  | 'maxNightSharePerYear'
   | 'maxConsecutiveNights'
 
 /**

@@ -167,6 +167,14 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     direction: 'param',
   },
   {
+    key: 'maxNightSharePerYear',
+    group: 'turnos',
+    label: 'Máximo de noche al año',
+    help: 'Proporción máxima del año que se puede estar en turnos marcados como nocturnos (0,333 = 1/3). Por encima de ese límite la persona pasa a considerarse "trabajador nocturno" y no se le pueden mandar horas extra. Se comprueba sobre el patrón repetido a lo largo del año.',
+    unit: '(0-1)',
+    direction: 'max',
+  },
+  {
     key: 'holidayTreatment',
     group: 'jornada',
     label: '¿Qué pasa con los festivos?',

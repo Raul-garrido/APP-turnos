@@ -68,6 +68,7 @@ const FULL_WEEK = 0b1111111
 const WORKWEEK = 0b0011111 // lunes a viernes
 
 const bit = (mask: number, day: number) => (mask >> day) & 1
+const popcount = (mask: number) => { let n=0; for(let d=0;d<7;d++) n+=bit(mask,d); return n }
 
 function seededRandom(seed: number) {
   let s = seed >>> 0 || 1
@@ -166,6 +167,11 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
   // - Además, el descanso REAL entre el último turno trabajado de la semana anterior y el primero
   //   de la siguiente (en horas, no solo "qué turno es") tiene que llegar al mínimo: una noche que
   //   acaba el domingo por la mañana dificilmente llega a las 12 h si el lunes se empieza de tarde.
+  // Turnos marcados como nocturnos (para "no más de 1/3 del año de noche" y "la noche siempre en
+  // un único bloque seguido"). Si no hay ninguno marcado, estas dos reglas no hacen nada.
+  const nightIdx = new Set(shiftIds.map((id, i) => (findShift(config.shifts, id)!.isNight ? i : -1)).filter((i) => i >= 0))
+  const nightShare = rules.maxNightSharePerYear ?? (nightIdx.size ? 1 / 3 : null)
+
   const transitionCostOf = (weeks: Week[]) => {
     let cost = 0
     let changes = 0
@@ -183,6 +189,19 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
         const restMin = ce.startMin + 10080 - pe.endMin // 10080 = minutos de una semana
         if (restMin < minRestMin) cost += (minRestMin - restMin) * 8
       }
+    }
+    // La noche tiene que ser un único bloque seguido (no dos o más tramos sueltos en el ciclo).
+    let nightBlocks = 0
+    for (let i = 0; i < weeks.length; i++) {
+      if (nightIdx.has(weeks[i].shift) && !nightIdx.has(weeks[mod(i - 1, weeks.length)].shift)) nightBlocks++
+    }
+    if (nightBlocks > 1) cost += (nightBlocks - 1) * 30_000
+    // No más de 1/3 del año en turno de noche (para no ser "trabajador nocturno" por ley).
+    if (nightShare != null && nightIdx.size) {
+      const nightDays = weeks.reduce((a, w) => a + (nightIdx.has(w.shift) ? popcount(w.mask) : 0), 0)
+      const totalDays = weeks.length * 7
+      const over = nightDays / totalDays - nightShare
+      if (over > 0) cost += over * totalDays * 20_000
     }
     return { cost, changes }
   }
