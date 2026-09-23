@@ -1,6 +1,6 @@
 // Piezas de interfaz reutilizables (tarjetas, botones, campos).
 
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 export function Card({ title, children, actions }: { title?: ReactNode; children: ReactNode; actions?: ReactNode }) {
   return (
@@ -60,16 +60,28 @@ export function NumberInput({
   step?: number
   className?: string
 }) {
+  // Texto propio para poder dejar el campo vacío mientras se edita, sin que
+  // el valor numérico del padre lo fuerce de vuelta al número anterior.
+  const [text, setText] = useState(value === null || value === undefined ? '' : String(value))
+
+  useEffect(() => {
+    setText(value === null || value === undefined ? '' : String(value))
+  }, [value])
+
   return (
     <input
       type="number"
       className={`${inputClass} w-24 ${className}`}
-      value={value ?? ''}
+      value={text}
       min={min}
       step={step}
       onChange={(e) => {
+        setText(e.target.value)
         const v = e.target.valueAsNumber
         if (!Number.isNaN(v)) onChange(v)
+      }}
+      onBlur={() => {
+        if (text.trim() === '') setText(value === null || value === undefined ? '' : String(value))
       }}
     />
   )
