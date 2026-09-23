@@ -104,9 +104,12 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
   // cada semana sea un tramo de trabajo homogéneo. Incluye la semana completa de 7 días sin ningún
   // libre, que se usa solo cuando hace falta cubrir el fin de semana (se compensa con el descanso
   // acumulado de la semana siguiente).
+  // El límite superior es 6, no 7: una semana con offLen=7 no trabajaría ningún día, desperdicia
+  // por completo esa semana del ciclo (7 equipos ya son pocos como para regalar uno entero parado)
+  // y nunca hace falta, porque el mismo descanso se puede repartir en un par de semanas parciales.
   const minOff = Math.ceil(rules.minDaysOffPerWeek ?? 0)
   const maskSet = new Set<number>([FULL_WEEK])
-  for (let offLen = minOff; offLen <= 7; offLen++) {
+  for (let offLen = minOff; offLen <= 6; offLen++) {
     for (let offStart = 0; offStart <= 7 - offLen; offStart++) {
       let m = FULL_WEEK
       for (let k = 0; k < offLen; k++) m &= ~(1 << (offStart + k))

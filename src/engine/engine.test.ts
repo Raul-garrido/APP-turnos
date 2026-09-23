@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { annualBalance, buildSchedule, effectiveOffsets, vacationDaysUsed } from './calendar'
-import { addDays, weekday } from './dates'
+import { addDays, mod, weekday } from './dates'
 import { defaultConfig, defaultRuleSets, makeTeams } from './defaults'
 import { computeOffsets, coverageTable, weekendStats } from './offsets'
-import { resolveRules, RULE_KEYS, SHIFT_MIX } from './rules'
+import { HOLIDAY_TREATMENT, resolveRules, RULE_KEYS, SHIFT_MIX, VACATION_TYPE } from './rules'
 import { parsePatternText } from './shifts'
-import { OFF, type EffectiveRules } from './types'
+import { OFF, type EffectiveRules, type RuleSet } from './types'
 import { checkShiftMixByCalendarWeek, SHIFT_STREAK_RULE, validatePattern } from './validation'
 
 const noRules = Object.fromEntries(RULE_KEYS.map((k) => [k, null])) as EffectiveRules
@@ -271,21 +271,63 @@ describe('búsqueda de patrón', () => {
 
   it('la noche va en un único bloque seguido y no pasa de 1/3 del año', async () => {
     const { suggestPattern } = await import('./patternSearch')
-    const rules = { ...resolveRules(defaultRuleSets(), base.activeRuleSetIds, {}).rules, maxNightSharePerYear: 1 / 3 }
+    // Un bloque de noche REALMENTE seguido (sin ningún hueco de un día suelto dentro) solo es
+    // posible con el descanso semanal acumulado en 14 días: con periodo de 7, el propio descanso
+    // semanal obliga a cortarlo en dos tramos aunque a nivel de "semana" parezcan uno solo.
+    const rules = {
+      ...resolveRules(defaultRuleSets(), base.activeRuleSetIds, {}).rules,
+      maxNightSharePerYear: 1 / 3,
+      weeklyRestWindowDays: 14,
+      weeklyRestMinHours: 72,
+    }
     const r = suggestPattern(base, rules, { priority: 'findes', seed: 2 })!
     expect(r.violations).toBe(0)
     expect(r.coverageDeficit).toBe(0)
-    const nightId = N.id
-    // Contamos los tramos de semanas de noche seguidas en el ciclo (circular): tiene que haber solo uno.
-    let blocks = 0
-    for (let w = 0; w < r.weeks; w++) {
-      const cur = r.pattern[w * 7] === nightId || r.pattern.slice(w * 7, w * 7 + 7).includes(nightId)
-      const prevW = (w - 1 + r.weeks) % r.weeks
-      const prev = r.pattern.slice(prevW * 7, prevW * 7 + 7).includes(nightId)
-      if (cur && !prev) blocks++
-    }
-    expect(blocks).toBe(1)
-    const nightDays = r.pattern.filter((x) => x === nightId).length
+    expect(realBlocks(r.pattern, N.id)).toBe(1)
+    const nightDays = r.pattern.filter((x) => x === N.id).length
     expect(nightDays / r.pattern.length).toBeLessThanOrEqual(1 / 3 + 1e-9)
   }, 60000)
+
+  it('máximo de días seguidos por turno (5/5/7) con jornada anual casi exacta', async () => {
+    const { suggestPattern } = await import('./patternSearch')
+    const c = { ...base, teams: makeTeams(7, 4) }
+    c.shifts = c.shifts.map((s, i) => ({ ...s, maxConsecutiveDays: [5, 5, 7][i] }))
+    const convenio: RuleSet = {
+      id: 'test-71', name: '', kind: 'convenio', description: '',
+      values: {
+        minRestBetweenShiftsHours: 12,
+        // Descanso semanal acumulado en periodo de 14 días: día y medio por semana (72 h en 14
+        // días), el mínimo que marca el Estatuto para el descanso acumulado (art. 37.1).
+        weeklyRestWindowDays: 14,
+        weeklyRestMinHours: 72,
+        minDaysOffPerWeek: 2,
+        vacationDays: 30,
+        vacationDayType: VACATION_TYPE.NATURALES,
+        maxAnnualWorkDays: 221,
+        maxAnnualHours: 1736,
+        annualHolidays: 14,
+        holidayTreatment: HOLIDAY_TREATMENT.SE_TRABAJAN,
+        maxNightSharePerYear: 1 / 3,
+      },
+    }
+    const { rules } = resolveRules([convenio], ['test-71'], {})
+    const r = suggestPattern(c, rules, { priority: 'findes', seed: 3 })!
+    expect(r.coverageDeficit).toBe(0)
+    expect(r.violations).toBe(0)
+    expect(realBlocks(r.pattern, N.id)).toBe(1)
+    expect(r.fullWeekendsPerYear).toBe(30)
+    // 1.724 h es el suelo que se pidió (la empresa ajusta el resto a mano si hace falta).
+    expect(r.netAnnualHours).toBeGreaterThanOrEqual(1724)
+  }, 60000)
 })
+
+/** Cuenta las rachas seguidas de un turno en el patrón, día a día y de forma circular. */
+function realBlocks(pattern: string[], shiftId: string): number {
+  let blocks = 0
+  for (let d = 0; d < pattern.length; d++) {
+    const cur = pattern[d] === shiftId
+    const prev = pattern[mod(d - 1, pattern.length)] === shiftId
+    if (cur && !prev) blocks++
+  }
+  return blocks
+}
