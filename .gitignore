@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Scripts sueltos para probar cosas en el chat, no son parte de la app
+scratch_*.test.ts
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
