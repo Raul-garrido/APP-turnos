@@ -167,6 +167,14 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     direction: 'param',
   },
   {
+    key: 'maxNightBlocksPerCycle',
+    group: 'turnos',
+    label: 'Máximo de bloques de noche por ciclo',
+    help: 'Cuántos tramos de días de noche seguidos puede haber a lo largo del ciclo. Con 1, toda la noche va en un único bloque continuo (nunca partida en dos tramos sueltos ni con huecos de cobertura sin cubrir).',
+    unit: 'bloques',
+    direction: 'max',
+  },
+  {
     key: 'maxNightSharePerYear',
     group: 'turnos',
     label: 'Máximo de noche al año',

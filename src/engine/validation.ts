@@ -202,6 +202,20 @@ export function validatePattern(pattern: PatternItem[], shifts: Shift[], rules: 
   }
   checkStreak('maxConsecutiveNights', rules.maxConsecutiveNights, (d) => !!shiftAt(d)?.isNight, 'turnos de noche')
 
+  // 4c. Máximo de bloques de noche por ciclo: los tramos se cuentan día a día (no semana a semana),
+  // para que dos bloques separados por un hueco de cobertura (aunque quepan en la misma semana del
+  // patrón) sí cuenten como dos tramos distintos.
+  if (rules.maxNightBlocksPerCycle != null && pattern.some((_, i) => shiftAt(i)?.isNight)) {
+    const max = rules.maxNightBlocksPerCycle
+    let blocks = 0
+    for (let d = anchorStart; d < anchorEnd; d++) {
+      if (shiftAt(d)?.isNight && !shiftAt(d - 1)?.isNight) blocks++
+    }
+    if (blocks > max) {
+      add('maxNightBlocksPerCycle', null, `El turno de noche aparece en ${blocks} tramos distintos del ciclo (máximo ${max}).`)
+    }
+  }
+
   // 4b. Máximo de noche al año (para no pasar a considerarse "trabajador nocturno")
   if (rules.maxNightSharePerYear != null && pattern.some((_, i) => shiftAt(i)?.isNight)) {
     const nightDays = pattern.filter((_, i) => shiftAt(i)?.isNight).length

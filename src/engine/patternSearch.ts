@@ -210,7 +210,7 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
       if (prevW.shift !== curW.shift) {
         changes++
         const gap = Math.abs(rank[curW.shift] - rank[prevW.shift])
-        cost += gap > 1 ? 6_000 : 120
+        cost += gap > 1 ? 30_000 : 120
       }
       const pe = weekEdges(prevW)
       const ce = weekEdges(curW)
@@ -466,8 +466,8 @@ export function maxFullWeekendsPerYear(config: BusinessConfig): number {
  * probabilidades sin que el usuario tenga que pulsar "generar otra opción" a mano.
  */
 export function suggestPattern(config: BusinessConfig, rules: EffectiveRules, opts: PatternSearchOptions): PatternSuggestion | null {
-  const attempts = opts.iterations != null ? 1 : 3
-  const perAttempt = opts.iterations ?? 13_000
+  const attempts = opts.iterations != null ? 1 : 5
+  const perAttempt = opts.iterations ?? 18_000
   // Cuanto más bajo, mejor: primero sin huecos de cobertura, luego sin incumplimientos, luego
   // más fines de semana, luego lo más cerca posible de la jornada anual en horas.
   const rank = (r: PatternSuggestion) => [r.coverageDeficit, r.violations, -r.fullWeekendsPerYear, Math.abs(r.excessHours ?? 0)]

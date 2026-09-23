@@ -126,6 +126,7 @@ export type RuleKey =
   | 'holidayTreatment'
   | 'maxNightSharePerYear'
   | 'maxConsecutiveNights'
+  | 'maxNightBlocksPerCycle'
 
 /**
  * Valores de reglas de un marco normativo.
