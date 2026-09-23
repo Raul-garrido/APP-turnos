@@ -169,7 +169,37 @@ export function validatePattern(pattern: PatternItem[], shifts: Shift[], rules: 
       }
     }
   }
-  checkStreak('maxConsecutiveWorkDays', rules.maxConsecutiveWorkDays, (d) => !!shiftAt(d), 'días trabajados')
+  // El máximo general de días seguidos NO se aplica a una racha que es enteramente de noche (esa
+  // racha ya la limita su propio "máximo de días seguidos" del turno de noche, normalmente más
+  // alto a propósito, p. ej. 7 noches seguidas en un único bloque en vez de partirlo en dos tramos
+  // o dejar un hueco sin cubrir). En cuanto la racha mezcla la noche con cualquier otro turno (o no
+  // tiene ningún turno de noche), sí cuenta como siempre.
+  if (rules.maxConsecutiveWorkDays != null) {
+    const max = rules.maxConsecutiveWorkDays
+    if (pattern.every((_, i) => !!shiftAt(i))) {
+      add('maxConsecutiveWorkDays', null, `El ciclo no tiene ninguna interrupción: los días trabajados se encadenan sin fin (máximo ${max}).`)
+    } else {
+      let run = 0
+      let runAllNight = true
+      for (let d = 0; d < anchorEnd; d++) {
+        const s = shiftAt(d)
+        if (s) {
+          run++
+          runAllNight = runAllNight && !!s.isNight
+        } else {
+          run = 0
+          runAllNight = true
+        }
+        if (d >= anchorStart && !runAllNight && run === max + 1) {
+          add(
+            'maxConsecutiveWorkDays',
+            cycleDay(d),
+            `Se encadenan más de ${max} días trabajados seguidos sin ser todos de noche (se supera en el día ${cycleDay(d)} del ciclo).`,
+          )
+        }
+      }
+    }
+  }
   checkStreak('maxConsecutiveNights', rules.maxConsecutiveNights, (d) => !!shiftAt(d)?.isNight, 'turnos de noche')
 
   // 4b. Máximo de noche al año (para no pasar a considerarse "trabajador nocturno")

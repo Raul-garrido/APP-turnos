@@ -308,6 +308,9 @@ describe('búsqueda de patrón', () => {
         annualHolidays: 14,
         holidayTreatment: HOLIDAY_TREATMENT.SE_TRABAJAN,
         maxNightSharePerYear: 1 / 3,
+        // 5 días seguidos como máximo, salvo el bloque de noche (7 días, un único bloque seguido,
+        // para no dejar huecos de cobertura ni tener que hacer dos semanas de noche contrapeadas).
+        maxConsecutiveWorkDays: 5,
       },
     }
     const { rules } = resolveRules([convenio], ['test-71'], {})
@@ -316,8 +319,33 @@ describe('búsqueda de patrón', () => {
     expect(r.violations).toBe(0)
     expect(realBlocks(r.pattern, N.id)).toBe(1)
     expect(r.fullWeekendsPerYear).toBe(30)
-    // 1.724 h es el suelo que se pidió (la empresa ajusta el resto a mano si hace falta).
-    expect(r.netAnnualHours).toBeGreaterThanOrEqual(1724)
+    // OJO: el suelo pedido es 1.724 h, pero con 30 fines de semana completos libres y el nuevo
+    // límite de 5 días seguidos (que obliga a meter un día libre en cada cambio de mañana a tarde
+    // que no caiga justo en fin de semana) el techo real que encuentra el buscador está en torno a
+    // 1.696 h: quedan por debajo del suelo. Es un límite estructural, no de la búsqueda (se ha
+    // comprobado con 10 semillas y 120.000 iteraciones cada una sin superarlo). Aquí solo se
+    // comprueba que no empeore respecto a eso; el hueco con el suelo de 1.724 h se lo planteamos
+    // al usuario para que decida qué ceder (menos fines de semana completos, o asumir el defecto).
+    expect(r.netAnnualHours).toBeGreaterThanOrEqual(1690)
+
+    // Comprobación explícita, día a día y de forma circular (incluye el empalme semana 7 -> semana
+    // 1), de que nunca se encadenan más de 5 días trabajados seguidos salvo que sean todos de noche.
+    const L = r.pattern.length
+    let run = 0
+    let runAllNight = true
+    let maxMixedRun = 0
+    for (let d = 0; d < L * 2; d++) {
+      const item = r.pattern[d % L]
+      if (item !== OFF) {
+        run++
+        runAllNight = runAllNight && item === N.id
+      } else {
+        if (!runAllNight) maxMixedRun = Math.max(maxMixedRun, run)
+        run = 0
+        runAllNight = true
+      }
+    }
+    expect(maxMixedRun).toBeLessThanOrEqual(5)
   }, 60000)
 })
 

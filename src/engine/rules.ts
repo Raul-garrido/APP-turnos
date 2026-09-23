@@ -73,7 +73,7 @@ export const RULE_DEFINITIONS: RuleDefinition[] = [
     key: 'maxConsecutiveWorkDays',
     group: 'descansos',
     label: 'Máximo de días seguidos trabajados',
-    help: 'Número máximo de días de trabajo consecutivos sin un día libre.',
+    help: 'Número máximo de días de trabajo consecutivos sin un día libre, aunque se cambie de turno de un día para otro (p. ej. acabar el bloque de mañana y seguir al día siguiente con tarde sin librar). No se aplica a un bloque que sea enteramente de turno de noche: ese lo limita solo su propio "máximo de días seguidos" (Negocio → Turnos), normalmente más alto a propósito para poder hacerlo en un único bloque seguido.',
     unit: 'días',
     direction: 'max',
   },
