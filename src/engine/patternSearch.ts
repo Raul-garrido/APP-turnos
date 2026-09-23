@@ -100,10 +100,10 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
   // Lo exigido cada día de la semana (0 = lunes) en cada turno.
   const need = active.map((c) => Array.from({ length: 7 }, (_, wd) => requiredOn(c, wd)))
 
-  // Semanas posibles: los días libres siempre forman UN bloque seguido (nunca sueltos), para que
-  // cada semana sea un tramo de trabajo homogéneo. Incluye la semana completa de 7 días sin ningún
-  // libre, que se usa solo cuando hace falta cubrir el fin de semana (se compensa con el descanso
-  // acumulado de la semana siguiente).
+  // Semanas posibles: por defecto los días libres forman UN bloque seguido (nunca sueltos), para
+  // que cada semana sea un tramo de trabajo homogéneo. Incluye la semana completa de 7 días sin
+  // ningún libre, que se usa solo cuando hace falta cubrir el fin de semana (se compensa con el
+  // descanso acumulado de la semana siguiente).
   // El límite superior es 6, no 7: una semana con offLen=7 no trabajaría ningún día, desperdicia
   // por completo esa semana del ciclo (7 equipos ya son pocos como para regalar uno entero parado)
   // y nunca hace falta, porque el mismo descanso se puede repartir en un par de semanas parciales.
@@ -116,12 +116,38 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
       maskSet.add(m)
     }
   }
+  // Excepción: un bloque más un único día suelto aparte (nunca dos sueltos, y nunca más de uno).
+  // Hace falta a veces para llegar al descanso semanal acumulado en 14 días ("día y medio") sin
+  // sacrificar un día entero de trabajo; el coste de "semana fragmentada" de más abajo hace que el
+  // buscador solo la use cuando de verdad compensa, nunca porque sí.
+  for (let offLen = minOff + 1; offLen <= 6; offLen++) {
+    const blockLen = offLen - 1
+    for (let offStart = 0; offStart <= 7 - blockLen; offStart++) {
+      let block = FULL_WEEK
+      for (let k = 0; k < blockLen; k++) block &= ~(1 << (offStart + k))
+      for (let extra = 0; extra < 7; extra++) {
+        if (extra >= offStart - 1 && extra <= offStart + blockLen) continue // pegado al bloque: ya es un bloque más largo
+        maskSet.add(block & ~(1 << extra))
+      }
+    }
+  }
   // Semanas "limpias": de lunes a viernes o la semana completa (para cubrir el fin de semana en
-  // algún turno). Se usan casi siempre. El resto de combinaciones (semanas más cortas) solo entran
-  // si hacen falta para que la cobertura cuadre exactamente.
+  // algún turno). Se usan casi siempre. El resto de combinaciones (semanas más cortas, o con un día
+  // suelto aparte) solo entran si hacen falta para que la cobertura o el descanso acumulado cuadren.
   const cleanMasks = [WORKWEEK, FULL_WEEK].filter((m) => maskSet.has(m))
   const masks = [...maskSet]
   const preferredMasks = cleanMasks.length ? cleanMasks : masks
+  // Número de bloques de días libres de una máscara (para penalizar semanas fragmentadas).
+  const offBlockCount = (mask: number) => {
+    let blocks = 0
+    let prevOff = false
+    for (let d = 0; d < 7; d++) {
+      const off = !bit(mask, d)
+      if (off && !prevOff) blocks++
+      prevOff = off
+    }
+    return blocks
+  }
 
   const toPattern = (weeks: Week[]): PatternItem[] =>
     weeks.flatMap((w) => Array.from({ length: 7 }, (_, d) => (bit(w.mask, d) ? shiftIds[w.shift] : OFF)))
@@ -218,6 +244,14 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
     // seguidos (aunque el total de fines de semana libres ya sea el máximo posible). Cuenta, para
     // cada semana que toca fin de semana, cuántas semanas seguidas antes también lo tocan: eso
     // penaliza mucho más una racha de 3 seguidas que dos rachas de una.
+    // Semana con más de un bloque de libranza (p. ej. un lunes suelto y luego un viernes suelto):
+    // se acepta si de verdad hace falta, pero cuesta más que un cambio de turno normal, así el
+    // buscador prefiere un único bloque salvo que fragmentar sea la única forma de llegar al
+    // descanso acumulado o a la cobertura exacta.
+    for (const w of weeks) {
+      const extraBlocks = offBlockCount(w.mask) - 1
+      if (extraBlocks > 0) cost += extraBlocks * 500
+    }
     let weekendRun = 0
     for (let i = 0; i < weeks.length * 2; i++) {
       const w = weeks[i % weeks.length]
