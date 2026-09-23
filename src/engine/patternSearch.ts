@@ -346,12 +346,28 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
     }))
   }
 
+  // Variante del punto de partida: una semana de cada turno cubre ya el fin de semana (trabaja de
+  // miércoles a domingo en vez de lunes a viernes). Cubrir el fin de semana exige que al menos una
+  // semana de cada turno lo trabaje sí o sí (si no, no hay cobertura ahí); partir ya con eso resuelto
+  // le ahorra a la búsqueda tener que "descubrirlo" enlazando varias mutaciones sueltas a la vez,
+  // que es justo el tipo de salto que al recocido simulado le cuesta encontrar por sí solo.
+  const initialWeekendAware = (): Week[] => {
+    const base = initial()
+    const midWeek = FULL_WEEK & ~(1 << 0) & ~(1 << 1) // libra lunes y martes, trabaja miércoles-domingo
+    if (!masks.includes(midWeek)) return base
+    for (let s = 0; s < S; s++) {
+      const idx = base.findIndex((w, i) => w.shift === s && (i === base.length - 1 || base[i + 1].shift !== s))
+      if (idx >= 0) base[idx] = { ...base[idx], mask: midWeek }
+    }
+    return base
+  }
+
   const iterations = opts.iterations ?? 36_000
   const restarts = 3
   let best = initial()
   let bestEval = evaluate(best)
   for (let r = 0; r < restarts; r++) {
-    let cur = r === 0 ? best : initial()
+    let cur = r === 0 ? best : r === 1 ? initialWeekendAware() : initial()
     let curEval = evaluate(cur)
     const steps = Math.floor(iterations / restarts)
     for (let k = 0; k < steps; k++) {
