@@ -356,20 +356,24 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
     const midWeek = FULL_WEEK & ~(1 << 0) & ~(1 << 1) // libra lunes y martes, trabaja miércoles-domingo
     if (!masks.includes(midWeek)) return base
     for (let s = 0; s < S; s++) {
-      const idx = base.findIndex((w, i) => w.shift === s && (i === base.length - 1 || base[i + 1].shift !== s))
+      const shiftIdx = order[s].i
+      const idx = base.findIndex((w, i) => w.shift === shiftIdx && (i === base.length - 1 || base[i + 1].shift !== shiftIdx))
       if (idx >= 0) base[idx] = { ...base[idx], mask: midWeek }
     }
     return base
   }
-
   const iterations = opts.iterations ?? 36_000
-  const restarts = 3
+  // El arranque con el fin de semana ya cubierto empieza con más incumplimientos que resolver
+  // (le falta afinar el descanso acumulado en cada semana), así que necesita más pasos para
+  // limpiarlos que un arranque homogéneo; se lleva la mitad del presupuesto total.
+  const restartSteps = [Math.floor(iterations * 0.25), Math.floor(iterations * 0.5), Math.floor(iterations * 0.25)]
+  const restartSeed = [initial, initialWeekendAware, initial]
   let best = initial()
   let bestEval = evaluate(best)
-  for (let r = 0; r < restarts; r++) {
-    let cur = r === 0 ? best : r === 1 ? initialWeekendAware() : initial()
+  for (let r = 0; r < restartSeed.length; r++) {
+    let cur = r === 0 ? best : restartSeed[r]()
     let curEval = evaluate(cur)
-    const steps = Math.floor(iterations / restarts)
+    const steps = restartSteps[r]
     for (let k = 0; k < steps; k++) {
       const temp = 300 * Math.pow(0.0015, k / steps)
       const cand = mutate(cur)
