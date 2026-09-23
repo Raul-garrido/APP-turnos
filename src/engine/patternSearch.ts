@@ -191,11 +191,19 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
       }
     }
     // La noche tiene que ser un único bloque seguido (no dos o más tramos sueltos en el ciclo).
+    // Contamos los bloques por DÍA real (no por semana): dos semanas de noche con algún día
+    // libre entre medias (por cómo caen sus máscaras) son dos bloques distintos, no uno.
+    const totalDays = weeks.length * 7
     let nightBlocks = 0
-    for (let i = 0; i < weeks.length; i++) {
-      if (nightIdx.has(weeks[i].shift) && !nightIdx.has(weeks[mod(i - 1, weeks.length)].shift)) nightBlocks++
+    for (let d = 0; d < totalDays; d++) {
+      const isNight = nightIdx.has(weeks[Math.floor(d / 7)].shift) && bit(weeks[Math.floor(d / 7)].mask, d % 7)
+      const prevD = mod(d - 1, totalDays)
+      const wasNight = nightIdx.has(weeks[Math.floor(prevD / 7)].shift) && bit(weeks[Math.floor(prevD / 7)].mask, prevD % 7)
+      if (isNight && !wasNight) nightBlocks++
     }
-    if (nightBlocks > 1) cost += (nightBlocks - 1) * 30_000
+    // Menos que el peso de una regla incumplida (50 000): nunca merece la pena romper una regla
+    // solo por mantener la noche en un único bloque; pero sigue siendo una preferencia fuerte.
+    if (nightBlocks > 1) cost += (nightBlocks - 1) * 8_000
     // No más de 1/3 del año en turno de noche (para no ser "trabajador nocturno" por ley).
     if (nightShare != null && nightIdx.size) {
       const nightDays = weeks.reduce((a, w) => a + (nightIdx.has(w.shift) ? popcount(w.mask) : 0), 0)
