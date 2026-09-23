@@ -214,6 +214,21 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
       const over = nightDays / totalDays - nightShare
       if (over > 0) cost += over * totalDays * 20_000
     }
+    // Repartir los fines de semana trabajados a lo largo del ciclo, no dejar que se junten varios
+    // seguidos (aunque el total de fines de semana libres ya sea el máximo posible). Cuenta, para
+    // cada semana que toca fin de semana, cuántas semanas seguidas antes también lo tocan: eso
+    // penaliza mucho más una racha de 3 seguidas que dos rachas de una.
+    let weekendRun = 0
+    for (let i = 0; i < weeks.length * 2; i++) {
+      const w = weeks[i % weeks.length]
+      const touchesWeekend = bit(w.mask, SAT) === 1 || bit(w.mask, SUN) === 1
+      if (touchesWeekend) {
+        weekendRun++
+        if (i >= weeks.length) cost += (weekendRun - 1) * (weekendRun - 1) * 900
+      } else {
+        weekendRun = 0
+      }
+    }
     return { cost, changes }
   }
 
