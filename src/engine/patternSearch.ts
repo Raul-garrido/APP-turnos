@@ -250,7 +250,7 @@ function suggestOnce(config: BusinessConfig, rules: EffectiveRules, opts: Patter
     // descanso acumulado o a la cobertura exacta.
     for (const w of weeks) {
       const extraBlocks = offBlockCount(w.mask) - 1
-      if (extraBlocks > 0) cost += extraBlocks * 500
+      if (extraBlocks > 0) cost += extraBlocks * 1200
     }
     let weekendRun = 0
     for (let i = 0; i < weeks.length * 2; i++) {
